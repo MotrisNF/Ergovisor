@@ -1,0 +1,218 @@
+{
+  "source": "data/video/Como levantar peso correctamente y prevenir el dolor de espalda(1).mp4",
+  "created": "2026-11-17T15:29:12+00:00",
+  "method": "REBA (Rapid Entire Body Assessment), según la NTP 601 del INSST (Hignett y McAtamney)",
+  "task": {
+    "load_kg": 5.0,
+    "sudden": false,
+    "coupling": 0
+  },
+  "summary": {
+    "seconds": 142.3,
+    "frames": 1424,
+    "frames_with_person": 1424,
+    "seconds_by_level": {
+      "0": 0.0,
+      "1": 60.8,
+      "2": 34.600000000000016,
+      "3": 46.9,
+      "4": 0.0
+    },
+    "max_score": 9,
+    "max_level": 3
+  },
+  "events": [
+    {
+      "start": 8.7,
+      "end": 29.3,
+      "score": 6,
+      "level": 2,
+      "risk": "Medio",
+      "action": "Necesaria",
+      "causes": [
+        "tronco inclinado 16°",
+        "cuello en extensión",
+        "brazo derecho elevado 52°"
+      ]
+    },
+    {
+      "start": 52.199999999999996,
+      "end": 95.8,
+      "score": 9,
+      "level": 3,
+      "risk": "Alto",
+      "action": "Necesaria pronto",
+      "causes": [
+        "tronco flexionado 77°",
+        "tronco girado o inclinado de lado",
+        "cuello flexionado 2°",
+        "brazo izquierdo elevado 70°"
+      ]
+    },
+    {
+      "start": 115.0,
+      "end": 132.2,
+      "score": 9,
+      "level": 3,
+      "risk": "Alto",
+      "action": "Necesaria pronto",
+      "causes": [
+        "tronco flexionado 44°",
+        "cuello en extensión",
+        "rodillas flexionadas 90°",
+        "brazo izquierdo elevado 46°"
+      ]
+    }
+  ],
+  "unmeasured": [
+    "hombro elevado",
+    "brazo apoyado",
+    "rotación del brazo",
+    "torsión o desviación de muñeca"
+  ],
+  "lifting": {
+    "method": "Ecuación de NIOSH revisada (NTP 477 del INSST), con los criterios de la Guía técnica de manipulación manual de cargas del INSST (2024)",
+    "load_kg": 5.0,
+    "grip": "bueno",
+    "duration": "larga",
+    "lifts_per_minute": 1.69,
+    "reference_kg": 25.0,
+    "lifts": [
+      {
+        "kind": "descenso",
+        "start": {
+          "second": 52.4,
+          "v": 67.8,
+          "h": 40.3,
+          "a": 7.1
+        },
+        "end": {
+          "second": 55.8,
+          "v": 39.3,
+          "h": 36.0,
+          "a": 1.4
+        },
+        "d": 28.5,
+        "limit": 8.68,
+        "index": 0.58,
+        "risk": "Riesgo limitado",
+        "factors": {
+          "HM": 0.62,
+          "VM": 0.98,
+          "DM": 0.98,
+          "AM": 0.98,
+          "FM": 0.65,
+          "CM": 1.0
+        },
+        "notes": [
+          "carga separada del cuerpo (40 cm; la guía recomienda 25 cm o menos)",
+          "manos por debajo de los nudillos en el origen (68 cm del suelo)",
+          "manos por debajo de los nudillos en el destino (39 cm del suelo)"
+        ]
+      },
+      {
+        "kind": "levantamiento",
+        "start": {
+          "second": 93.2,
+          "v": 29.8,
+          "h": 25.9,
+          "a": 25.2
+        },
+        "end": {
+          "second": 97.0,
+          "v": 85.3,
+          "h": 56.6,
+          "a": 42.7
+        },
+        "d": 55.5,
+        "limit": 4.98,
+        "index": 1.0,
+        "risk": "Incremento moderado del riesgo",
+        "factors": {
+          "HM": 0.44,
+          "VM": 0.97,
+          "DM": 0.9,
+          "AM": 0.86,
+          "FM": 0.65,
+          "CM": 1.0
+        },
+        "notes": [
+          "carga separada del cuerpo (57 cm; la guía recomienda 25 cm o menos)",
+          "manos por debajo de los nudillos en el origen (30 cm del suelo)"
+        ]
+      },
+      {
+        "kind": "descenso",
+        "start": {
+          "second": 114.7,
+          "v": 86.1,
+          "h": 38.4,
+          "a": 8.1
+        },
+        "end": {
+          "second": 119.4,
+          "v": 21.1,
+          "h": 35.8,
+          "a": 2.4
+        },
+        "d": 65.0,
+        "limit": 7.71,
+        "index": 0.65,
+        "risk": "Riesgo limitado",
+        "factors": {
+          "HM": 0.7,
+          "VM": 0.84,
+          "DM": 0.89,
+          "AM": 0.99,
+          "FM": 0.65,
+          "CM": 1.0
+        },
+        "notes": [
+          "carga separada del cuerpo (38 cm; la guía recomienda 25 cm o menos)",
+          "manos por debajo de los nudillos en el destino (21 cm del suelo)"
+        ]
+      },
+      {
+        "kind": "levantamiento",
+        "start": {
+          "second": 127.0,
+          "v": 29.1,
+          "h": 26.4,
+          "a": 1.6
+        },
+        "end": {
+          "second": 131.8,
+          "v": 84.2,
+          "h": 31.9,
+          "a": 10.6
+        },
+        "d": 55.1,
+        "limit": 9.94,
+        "index": 0.5,
+        "risk": "Riesgo limitado",
+        "factors": {
+          "HM": 0.78,
+          "VM": 0.97,
+          "DM": 0.9,
+          "AM": 0.97,
+          "FM": 0.65,
+          "CM": 1.0
+        },
+        "notes": [
+          "carga separada del cuerpo (32 cm; la guía recomienda 25 cm o menos)",
+          "manos por debajo de los nudillos en el origen (29 cm del suelo)"
+        ]
+      }
+    ],
+    "max_index": 1.0,
+    "notes": [],
+    "assumptions": [
+      "El modelo de pose no ve la carga: cada subida o bajada de las manos de 25 cm o más cuenta como manipulación de la carga indicada.",
+      "Duración de la tarea: larga (más de 2 horas (hasta 8)).",
+      "Las distancias salen del esqueleto en 3D y tienen un error de varios centímetros.",
+      "Frecuencia contada en el vídeo, que se supone representativo de la tarea."
+    ],
+    "scale": 1.063,
+    "stature_cm": 175.0
+  }
+}

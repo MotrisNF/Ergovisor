@@ -1,11 +1,15 @@
 """Tokenizer shared by indexing and search."""
 import re
+import unicodedata
 
 
 class Tokenizer:
     """Split text into lowercase terms for BM25.
 
-    Two passes over the lowercase text:
+    The text is put in lower case and its accents are removed, so a
+    Spanish word stays whole (``manipulación`` → ``manipulacion``, not
+    ``manipulaci`` and ``n``) and a question written without accents
+    still finds it. Then two passes:
 
     1. ``PATTERN``: every run of letters or digits
        (``max_model_len`` → ``max``, ``model``, ``len``).
@@ -43,7 +47,25 @@ class Tokenizer:
         "there", "from", "as", "at", "use", "used", "using",
         # In every chunk path (idf 0)
         "vllm",
+        # Spanish question words, articles, prepositions and common verbs,
+        # without accents (as ``tokenize`` leaves them)
+        "que", "cual", "cuales", "como", "cuando", "donde", "quien",
+        "cuanto", "cuanta", "cuantos", "cuantas", "el", "la", "los", "las",
+        "un", "una", "unos", "unas", "lo", "al", "del", "de", "en", "y",
+        "o", "u", "e", "con", "por", "para", "sin", "sobre", "entre",
+        "hasta", "desde", "se", "su", "sus", "mi", "mis", "me", "te", "tu",
+        "le", "les", "es", "son", "esta", "estan", "ser", "hay", "puede",
+        "pueden", "puedo", "debe", "deben", "debo", "tengo", "tiene",
+        "este", "esto", "estos", "estas", "ese", "esa", "eso", "mas",
+        "muy", "si", "no", "ya",
     })
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        """Lower case, without accents: ``Posición`` → ``posicion``."""
+        decomposed = unicodedata.normalize("NFKD", text.lower())
+        return "".join(c for c in decomposed
+                       if not unicodedata.combining(c))
 
     def tokenize(self, text: str) -> list[str]:
         """Return the terms of ``text``, repetitions included.
@@ -57,7 +79,7 @@ class Tokenizer:
             The plain terms, then the snake_case names, each group in
             text order. Empty when there are none.
         """
-        low_text = text.lower()
+        low_text = self.normalize(text)
         return (self.PATTERN.findall(low_text)
                 + self.SNAKE_PATTERN.findall(low_text))
 

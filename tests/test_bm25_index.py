@@ -96,9 +96,10 @@ class TestTokenizer:
         """Order and repetitions are kept (counts matter for BM25)."""
         assert Tokenizer().tokenize("b a b") == ["b", "a", "b"]
 
-    def test_non_ascii_letters_split(self) -> None:
-        """Only ``a-z``: accented letters act as separators."""
-        assert Tokenizer().tokenize("café") == ["caf"]
+    def test_accents_removed(self) -> None:
+        """Accented letters lose their accent instead of cutting the word
+        (they used to act as separators: ``caf``)."""
+        assert Tokenizer().tokenize("café") == ["cafe"]
 
     def test_pass_order(self) -> None:
         """Plain terms, then snake_case names."""
@@ -752,3 +753,23 @@ class TestRealCorpus:
         for question in questions:
             assert len(real_index.search(question, 10)) == 10
         assert time.perf_counter() - start < 30
+
+
+class TestSpanish:
+    """Spanish text: words with accents stay whole."""
+
+    def test_accents_and_enye(self) -> None:
+        """No word is cut at an accent, and accents do not matter."""
+        assert Tokenizer().tokenize("Manipulación del año, posición") == [
+            "manipulacion", "del", "ano", "posicion"]
+
+    def test_question_words_are_dropped(self) -> None:
+        """Only the words that carry meaning are searched."""
+        assert Tokenizer().tokenize_query(
+            "¿Cuál es el peso máximo que se puede levantar?") == [
+            "peso", "maximo", "levantar"]
+
+    def test_english_unchanged(self) -> None:
+        """The code corpus is tokenized as before."""
+        assert Tokenizer().tokenize("max_model_len of vLLM") == [
+            "max", "model", "len", "of", "vllm", "max_model_len"]
