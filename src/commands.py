@@ -1164,7 +1164,7 @@ class RagCLI:
                 str, Field(min_length=1)] = "data/output/posture",
             upload_directory: Annotated[
                 str, Field(min_length=1)] = "data/uploads",
-            llm: Literal["lite", "flash"] = "lite",
+            llm: Literal["lite", "flash", "hydrogen"] = "lite",
             record: bool = False
             ) -> None:
         """Open the graphical interface: a page on this computer to
@@ -1185,8 +1185,9 @@ class RagCLI:
             upload_directory: Where uploaded videos are kept.
             llm: The Gemini model that writes the detailed reports and
                 the summaries: ``lite`` (Gemini 3.5 Flash Lite, the
-                default) or ``flash`` (Gemini 3.8 Flash, writes better,
-                for a demonstration). It needs ``GEMINI_API_KEY``; it
+                default, seconds), ``hydrogen`` (Gemini 4 Hydrogen, the
+                best report, about a minute) or ``flash`` (Gemini 3.8
+                Flash, minutes). It needs ``GEMINI_API_KEY``; it
                 is called once for each analysis the interface saves,
                 and once for each summary asked for.
             record: Allow recording the cameras' original video to

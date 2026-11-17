@@ -45,8 +45,10 @@ serve:
 # and video, and each one saves its report first.
 # The detailed reports (written by themselves when an analysis ends) and
 # the summaries are written by Gemini (needs
-# GEMINI_API_KEY): LLM=lite (Gemini 3.5 Flash Lite, default) or LLM=flash
-# (Gemini 3.8 Flash, writes better, for a demonstration): make app LLM=flash
+# GEMINI_API_KEY): LLM=lite (Gemini 3.5 Flash Lite, default, seconds),
+# LLM=hydrogen (Gemini 4 Hydrogen, the best report, about a minute: for a
+# demonstration) or LLM=flash (Gemini 3.8 Flash, minutes):
+# make app LLM=hydrogen
 # Recording the cameras' original video is off unless RECORD=1 (for
 # calibration videos): make app RECORD=1
 # Options for `app`: APP_ARGS="--port 8080 --limit 2 --model full"

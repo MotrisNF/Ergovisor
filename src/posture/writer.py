@@ -28,17 +28,24 @@ from pydantic import BaseModel
 
 from ..exceptions import RagError
 
-# The models with the most quota for this project's key: ``lite`` for
-# everyday use, ``flash`` writes better (for a demonstration).
-LlmChoice = Literal["lite", "flash"]
+# The models with the most quota for this project's key. Compared on
+# 2026-11-17 with the same analysis: ``lite`` in 7 s, sound but close to
+# a copy of the data; ``hydrogen`` in about 1 min, the best report (it
+# interprets the data and ranks the measures); ``flash`` in about 5 min,
+# between the two.
+LlmChoice = Literal["lite", "flash", "hydrogen"]
 MODELS: dict[str, str] = {
     "lite": "gemini-3.5-flash-lite",
     "flash": "gemini-3.8-flash",
+    "hydrogen": "gemini-4-hydrogen",
 }
 API = ("https://generativelanguage.googleapis.com/v1beta/models/"
        "{model}:generateContent")
 KEY_ENV = "GEMINI_API_KEY"
-TIMEOUT = 240.0
+# Seconds to wait for an answer: a stronger model thinks before writing
+# and can take minutes on a long report; giving up earlier loses a call
+# that was already counted.
+TIMEOUT = 600.0
 # Busy model (500, 503): wait these seconds and try again. These answers
 # write nothing, so they do not spend quota.
 RETRY_WAITS = (5.0, 15.0)
@@ -141,7 +148,15 @@ respeta) el límite de peso recomendado: di que no se puede valorar sin \
 el peso de la carga. Usa la actuación de cada nivel REBA tal como se da \
 en los datos.
 8. Formato Markdown: títulos con ##, listas con -, tablas con |, negrita \
-con **. Sin bloques de código ni HTML."""
+con **. Sin bloques de código ni HTML, ni fórmulas LaTeX: escribe los \
+símbolos tal cual (≤, ≥, °).
+9. Cita solo lo que el pasaje dice. Las advertencias propias de este \
+informe (que es un análisis automático, sus limitaciones, que no \
+sustituye a la evaluación por personal técnico competente) no llevan \
+cita: no están en las fuentes.
+10. No exageres los datos: usa sus mismos términos (si dicen "cuello en \
+extensión", no escribas "hiperextensión"; si dicen "inclinado", no \
+escribas "severamente flexionado")."""
 
 
 def document_name(file_path: str) -> str:
@@ -342,6 +357,29 @@ def check_citations(markdown: str, numbers: set[int]
     return CITATION.sub(fix, markdown), cited, unknown
 
 
+# LaTeX a model may write despite being told not to, and its symbol.
+LATEX = {r"\le": "≤", r"\leq": "≤", r"\ge": "≥", r"\geq": "≥",
+         r"^\circ": "°", r"^{\circ}": "°", r"\times": "×",
+         r"\approx": "≈", r"\%": "%"}
+LATEX_MATH = re.compile(r"\$([^$\n]{1,20})\$")
+
+
+def plain_symbols(text: str) -> str:
+    """``$\\le$ 25 cm`` -> ``≤ 25 cm``: short LaTeX formulas as the
+    symbols they stand for (a formula it does not know is left as is)."""
+
+    def symbol(match: re.Match[str]) -> str:
+        inner = match.group(1).strip()
+        if "\\" not in inner:
+            # Not LaTeX: two dollar signs of prices, for example.
+            return match.group(0)
+        for code, sign in sorted(LATEX.items(), key=lambda i: -len(i[0])):
+            inner = inner.replace(code, sign)
+        return match.group(0) if "\\" in inner else inner.strip()
+
+    return LATEX_MATH.sub(symbol, text)
+
+
 def _references(sources: list[tuple[Source, str]], cited: list[int]) -> str:
     """The references, one line per document with the numbers of its
     passages cited (and their sections, when known)."""
@@ -363,7 +401,8 @@ def _finish(kind: Literal["report", "summary"], title: str, model: str,
             text: str, sources: list[tuple[Source, str]],
             reports: list[str]) -> Written:
     numbers = {source.number for source, _ in sources}
-    text, cited, unknown = check_citations(text.strip(), numbers)
+    text, cited, unknown = check_citations(plain_symbols(text.strip()),
+                                           numbers)
     markdown = f"# {title}\n\n{text}"
     if cited:
         markdown += "\n" + _references(sources, cited)

@@ -68,6 +68,25 @@ class TestCitations:
         assert check_citations("sin citas", {1}) == ("sin citas", [], [])
 
 
+class TestSymbols:
+    """LaTeX the model should not write becomes plain symbols."""
+
+    @pytest.mark.parametrize(("text", "plain"), [
+        ("a $\\le$ 25 cm", "a ≤ 25 cm"),
+        ("$\\geq$ 3", "≥ 3"),
+        ("20$^\\circ$", "20°"),
+        ("cuesta 5 $ y 6 $", "cuesta 5 $ y 6 $"),
+        ("$\\frac{a}{b}$", "$\\frac{a}{b}$"),
+    ])
+    def test_symbols(self, text: str, plain: str) -> None:
+        assert writer.plain_symbols(text) == plain
+
+    def test_rules_in_instructions(self) -> None:
+        assert "hiperextensión" in writer.SYSTEM
+        assert "no llevan" in writer.SYSTEM
+        assert "LaTeX" in writer.SYSTEM
+
+
 class TestPrompt:
     """What the model is given."""
 
