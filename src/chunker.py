@@ -1,5 +1,7 @@
 """Split corpus documents into chunks small enough to retrieve."""
 from abc import ABC, abstractmethod
+from bisect import bisect_right
+import re
 
 from tqdm import tqdm
 
@@ -251,6 +253,8 @@ class MdChunker(FixedSizeChunker):
             vLLM docs, almost every opening fence carries a language
             (```bash, ```python): ``\\n```\\n`` matches the closing ones,
             so the block stays in the chunk it closes.
+        HEADING: A Markdown heading line: its ``#`` and its title.
+        FENCE_LINE: A line that opens or closes a code block.
     """
 
     SEPARATORS: tuple[str, ...] = (
@@ -260,3 +264,51 @@ class MdChunker(FixedSizeChunker):
         " ",
         )
     CUT_BEFORE: frozenset[str] = frozenset()
+    HEADING = re.compile(r"^(#{1,6}) +(\S.*)$", re.MULTILINE)
+    FENCE_LINE = re.compile(r"^```", re.MULTILINE)
+
+    @classmethod
+    def _headings(cls, text: str) -> list[tuple[int, int, str]]:
+        """The headings of a Markdown text, outside code blocks.
+
+        Args:
+            text: The whole document.
+
+        Returns:
+            ``(position, level, title)`` of each heading, in text order.
+            A ``#`` line inside a fenced block (a shell comment) is not
+            a heading.
+        """
+        fences = [m.start() for m in cls.FENCE_LINE.finditer(text)]
+        return [(m.start(), len(m.group(1)), m.group(2).strip())
+                for m in cls.HEADING.finditer(text)
+                # An odd number of fences before it: inside a block.
+                if bisect_right(fences, m.start()) % 2 == 0]
+
+    def chunk_document(self, doc: Document) -> list[Chunk]:
+        """Split like ``FixedSizeChunker`` and give each chunk its heading.
+
+        The heading is the document's title (its first level-1 heading)
+        followed by the last heading that starts before the chunk, e.g.
+        "Ley 31/1995... Artículo 20. Medidas de emergencia". A heading
+        inside the chunk is already in its text.
+
+        Args:
+            doc: The document to split.
+
+        Returns:
+            Its chunks, in file order, with their headings.
+        """
+        chunks = super().chunk_document(doc)
+        headings = self._headings(doc.text)
+        if not headings:
+            return chunks
+        title = next((t for _, level, t in headings if level == 1), "")
+        starts = [position for position, _, _ in headings]
+        for index, chunk in enumerate(chunks):
+            before = bisect_right(starts, chunk.first_character_index - 1)
+            section = headings[before - 1][2] if before else ""
+            heading = title if section == title else f"{title} {section}"
+            chunks[index] = chunk.model_copy(
+                update={"heading": heading.strip()})
+        return chunks

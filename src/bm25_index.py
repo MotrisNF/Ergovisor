@@ -158,7 +158,8 @@ class BM25Index(Retriever):
 
     @staticmethod
     def _chunk_tokens(tokenizer: Tokenizer, chunk: Chunk) -> list[str]:
-        """The terms a chunk is indexed with: its text and its file path.
+        """The terms a chunk is indexed with: its text, its file path and
+        its heading.
 
         Shared by ``build`` and ``update``, so a chunk gets the same terms
         in a full and in an incremental index.
@@ -168,11 +169,13 @@ class BM25Index(Retriever):
             chunk: The chunk to tokenize.
 
         Returns:
-            The terms of the text followed by those of the path, with
-            repeats (``Counter`` turns them into occurrences).
+            The terms of the text, then those of the path and of the
+            heading, with repeats (``Counter`` turns them into
+            occurrences).
         """
         return (tokenizer.tokenize(chunk.text)
-                + tokenizer.tokenize(chunk.file_path))
+                + tokenizer.tokenize(chunk.file_path)
+                + tokenizer.tokenize(chunk.heading))
 
     def _idf(self, term: str) -> float:
         """Rarity of a term: ``ln((N - df + 0.5) / (df + 0.5) + 1)``.

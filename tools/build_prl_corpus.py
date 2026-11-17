@@ -29,6 +29,11 @@ LAWS = {
     "BOE-A-1995-24292": ("ley_31_1995_prevencion_riesgos",
                          "Ley 31/1995, de 8 de noviembre, de Prevención de "
                          "Riesgos Laborales"),
+    "BOE-A-1997-8671": ("rd_488_1997_pantallas_visualizacion",
+                        "Real Decreto 488/1997, de 14 de abril, sobre "
+                        "disposiciones mínimas de seguridad y salud "
+                        "relativas al trabajo con equipos que incluyen "
+                        "pantallas de visualización"),
 }
 # PDF file name in data/sources -> title. Other PDFs there are used too,
 # titled by their file name.
@@ -40,6 +45,10 @@ PDF_TITLES = {
                "postural. Método REBA (INSST)",
     "ntp_477": "NTP 477: Levantamiento manual de cargas: ecuación del NIOSH "
                "(INSST)",
+    "guia_tecnica_pvd_2021": "Guía técnica para la evaluación y prevención "
+                             "de los riesgos relativos a la utilización de "
+                             "equipos con pantallas de visualización "
+                             "(INSST, 2021)",
 }
 # Paragraph classes of the BOE that are headings.
 HEADINGS = {"articulo", "titulo", "titulo_num", "titulo_tit", "capitulo",

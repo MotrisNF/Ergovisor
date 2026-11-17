@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import (TYPE_CHECKING, Annotated, Any, Callable, Literal,
                     TypeVar, cast, get_args, get_origin)
 import uuid
+from datetime import datetime
 
 from pydantic import (BaseModel, ConfigDict, Field, FilePath, ValidationError,
                       validate_call)
@@ -737,7 +738,8 @@ class RagCLI:
             student_search_results_path: FilePath = SEARCH_RESULTS,
             dataset_path: FilePath = DATASET_ANSWERS,
             k: Annotated[int, Field(gt=0)] = 10,
-            show_failed: bool = False
+            show_failed: bool = False,
+            any_source: bool = False
             ) -> None:
         """Print recall@k of search results against a ground-truth dataset.
 
@@ -757,6 +759,9 @@ class RagCLI:
             k: Largest k for which recall is reported.
             show_failed: List every question not found within the first k
                 results, with its text.
+            any_source: A question counts as found when any of its
+                sources is, for answers given word for word by several
+                documents. Off, it is the moulinette's metric.
         """
 
         dataset = self._open_file_save(
@@ -766,7 +771,7 @@ class RagCLI:
             student_search_results_path,
             StudentSearchResults)
         try:
-            evaluation: EvaluationInform = Evaluator().evaluate(
+            evaluation: EvaluationInform = Evaluator(any_source).evaluate(
                 retrived, dataset, k
             )
         except DatasetEvaluationError as e:
@@ -893,6 +898,9 @@ class RagCLI:
             task_duration: Literal["corta", "moderada", "larga"] = "larga",
             lifts_per_minute: Annotated[float, Field(ge=0)] = 0.0,
             height_cm: Annotated[float, Field(ge=0, le=250)] = 0.0,
+            regulation_dir: str = "",
+            retriever: RetrieverMode = "bm25",
+            k: Annotated[int, Field(gt=0)] = 3,
             save_directory: Annotated[
                 str, Field(min_length=1)] = "data/output/posture"
             ) -> None:
@@ -901,7 +909,9 @@ class RagCLI:
         Reads a recorded video (``--video``) or a live camera
         (``--camera``): the analysis is the same, frame by frame. Each
         moment of risk is printed as soon as it ends; at the end, the
-        whole analysis is saved as JSON and its path printed.
+        whole analysis is saved as JSON and its path printed: named after
+        the video, or ``camera_<date>_<time>.json`` for a camera (when
+        it started), so sessions never overwrite each other.
 
         Args:
             video: A video file to analyse.
@@ -934,9 +944,19 @@ class RagCLI:
                 lifts in the video.
             height_cm: The person's real height, to scale the distances
                 the model measures (0: the model's own scale).
+            regulation_dir: The index of the prevention corpus
+                (``data/processed/prl``): when given, the regulation of
+                each kind of risk is printed as soon as it is first seen,
+                and saved at the end, as ``regulation`` does. Empty: not
+                looked up.
+            retriever: ``bm25`` or ``hybrid``, for that search.
+            k: Passages per kind of risk, each from a different document.
             save_directory: Folder where the analysis JSON is written.
         """
-        from .posture.analysis import analyse, describe, describe_lift
+        from .posture.analysis import (analyse, describe, describe_lift,
+                                       describe_office)
+        from .posture.face import FaceEstimator
+        from .posture.office import Office
         from .posture.lifting import Lifting, reference_kg
         from .posture.overlay import Overlay
         from .posture.pose import PoseEstimator
@@ -950,7 +970,11 @@ class RagCLI:
             frames, name = VideoFile(video, every), video
         else:
             device: int | str = int(camera) if camera.isdigit() else camera
-            frames, name = Camera(device, every), f"camera {camera}"
+            frames = Camera(device, every,
+                            warn=lambda text: tqdm.write(text,
+                                                         file=sys.stderr))
+            # Without the password, if the address has one.
+            name = frames.name
         task = Task(load_kg=load_kg, sudden=sudden,
                     coupling=cast(Literal[0, 1, 2, 3], coupling))
         lifting = Lifting(
@@ -966,9 +990,36 @@ class RagCLI:
         drawing = (Overlay(Path(overlay) if overlay else None, show,
                            fps=rate)
                    if overlay or show else None)
+        # The index is loaded before the pose model, so a wrong
+        # --regulation_dir fails at once, and each risk gets its
+        # regulation as soon as it ends.
+        live = None
+        if regulation_dir:
+            from .posture.regulation import LiveRegulation
+            live = LiveRegulation(
+                self._build_retriever(regulation_dir, retriever), k)
         print(f"Loading the pose model ({model})...", file=sys.stderr)
         estimator = PoseEstimator(model)
+        # The face model is only used when the camera sees a person
+        # seated at the screen (the hips out of the picture).
+        faces = FaceEstimator()
+        started = datetime.now()
         progress = tqdm(desc="Analysing", unit="frame", file=sys.stderr)
+
+        def on_event(event: Any) -> None:
+            tqdm.write(describe(event), file=sys.stderr)
+            if live is not None:
+                self._print_findings(live.event(event))
+
+        def on_office(warning: Any) -> None:
+            tqdm.write(describe_office(warning), file=sys.stderr)
+            if live is not None:
+                self._print_findings(live.office(warning))
+
+        def on_lift(lift: Any) -> None:
+            tqdm.write(describe_lift(lift), file=sys.stderr)
+            if live is not None:
+                self._print_findings(live.lift(lift))
 
         def draw(frame: Any, *found: Any) -> bool:
             assert drawing is not None
@@ -978,17 +1029,17 @@ class RagCLI:
         try:
             result = analyse(
                 frames, estimator, name, task, alert_level, seconds,
-                on_event=lambda event: tqdm.write(describe(event),
-                                                  file=sys.stderr),
+                on_event=on_event,
                 on_frame=lambda frame: progress.update(),
                 interruptible=bool(camera),
                 on_result=draw if drawing is not None else None,
                 lifting=lifting,
-                on_lift=lambda lift: tqdm.write(describe_lift(lift),
-                                                file=sys.stderr))
+                on_lift=on_lift, office=Office(), faces=faces,
+                on_office=on_office)
         finally:
             progress.close()
             estimator.close()
+            faces.close()
             if drawing is not None:
                 drawing.close()
         summary = result.summary
@@ -1003,12 +1054,165 @@ class RagCLI:
             print(f"{len(report.lifts)} lifts and lowerings, "
                   f"{report.lifts_per_minute:.1f} a minute{index}",
                   file=sys.stderr)
-        stem = Path(video).stem if video else "camera"
+        # A camera session is named by when it started (local time), so
+        # a new session never overwrites the previous one.
+        if result.office is not None:
+            screen = result.office
+            distance = (f", usual distance {screen.distance_cm:.0f} cm"
+                        if screen.distance_cm is not None else "")
+            print(f"At a screen {screen.seconds_at_screen:.0f} s{distance}, "
+                  f"{len(screen.events)} warnings, "
+                  f"{screen.blinks} blinks", file=sys.stderr)
+        stem = (Path(video).stem if video
+                else f"camera_{started:%Y-%m-%d_%H-%M-%S}")
         path = self._save_json(save_directory, f"{stem}.json", result)
         print(f"Analysis saved in '{path}'", file=sys.stderr)
         if overlay:
             print(f"Video with the analysis drawn saved in '{overlay}'",
                   file=sys.stderr)
+        if live is not None:
+            self._regulation(result, regulation_dir, retriever, k,
+                             save_directory, stem, live)
+
+    @CliCommand.validated
+    def regulation(
+            self,
+            analysis_path: FilePath,
+            index_dir: Annotated[
+                str, Field(min_length=1)] = "data/processed/prl",
+            retriever: RetrieverMode = "bm25",
+            k: Annotated[int, Field(gt=0)] = 3,
+            save_directory: Annotated[
+                str, Field(min_length=1)] = "data/output/posture"
+            ) -> None:
+        """Find the regulation behind each risk of a saved analysis.
+
+        Each kind of risk ``analyze`` found (a forced posture, a load far
+        from the body, the lifting index...) is searched in the index of
+        the prevention corpus, and the best passage of each document is
+        printed and saved as ``<analysis>_regulation.json``. Only the
+        search: nothing is generated or cited yet.
+
+        Args:
+            analysis_path: The JSON file ``analyze`` wrote.
+            index_dir: The index of the prevention corpus.
+            retriever: ``bm25`` uses the words only; ``hybrid`` reranks
+                them with the vector index.
+            k: Passages per kind of risk, each from a different document.
+            save_directory: Folder where the result is written.
+        """
+        from .posture.analysis import Analysis
+
+        result = self._open_file_save(analysis_path, Analysis)
+        self._regulation(result, index_dir, retriever, k, save_directory,
+                         analysis_path.stem)
+
+    @staticmethod
+    def _print_findings(findings: list[Any]) -> None:
+        """Print findings of the regulation, between the progress bar."""
+        from .posture.regulation import describe_finding
+
+        for finding in findings:
+            tqdm.write(describe_finding(finding), file=sys.stderr)
+
+    def _regulation(self, result: Any, index_dir: str,
+                    retriever: RetrieverMode, k: int, save_directory: str,
+                    stem: str, live: Any = None) -> None:
+        """Look up, print and save the regulation of an analysis.
+
+        Shared by ``analyze`` and ``regulation``.
+
+        Args:
+            result: The ``Analysis``.
+            index_dir: The index of the prevention corpus.
+            retriever: ``bm25`` or ``hybrid``.
+            k: Passages per kind of risk.
+            save_directory: Folder where the result is written.
+            stem: Name of the analysis, for the file name.
+            live: The ``LiveRegulation`` of ``analyze``: its retriever is
+                reused, and the topics it already printed are not
+                printed or searched again (only those seen at the end,
+                like the frequency of the lifts).
+        """
+        from .posture.regulation import find_regulation
+
+        if live is None:
+            search, searched = self._build_retriever(index_dir,
+                                                     retriever), {}
+        else:
+            search, searched = live.retriever, live.searched
+        shown = set(searched)
+        report = find_regulation(
+            result, search, index_dir, k,
+            on_finding=lambda finding: (
+                None if finding.topic in shown
+                else self._print_findings([finding])),
+            searched=searched)
+        for warning in report.unmatched:
+            print(f"Without a topic: {warning}", file=sys.stderr)
+        path = self._save_json(save_directory, f"{stem}_regulation.json",
+                               report)
+        print(f"Regulation saved in '{path}'", file=sys.stderr)
+
+    @CliCommand.validated
+    def app(self,
+            port: Annotated[int, Field(ge=1, le=65535)] = 8000,
+            limit: Annotated[int, Field(ge=1, le=16)] = 4,
+            model: Literal["lite", "full", "heavy"] = "lite",
+            regulation_dir: str = "data/processed/prl",
+            save_directory: Annotated[
+                str, Field(min_length=1)] = "data/output/posture",
+            upload_directory: Annotated[
+                str, Field(min_length=1)] = "data/uploads",
+            llm: Literal["lite", "flash"] = "lite",
+            record: bool = False
+            ) -> None:
+        """Open the graphical interface: a page on this computer to
+        analyse cameras and videos and read the reports, until Ctrl+C.
+
+        It listens on 127.0.0.1 only, so no other computer can open it.
+        Each camera or video is analysed in its own process; closing the
+        browser does not stop them. Ctrl+C stops them all, and each one
+        saves its report first.
+
+        Args:
+            port: Port of the page (``http://127.0.0.1:<port>``).
+            limit: Cameras and videos analysed at the same time, at most.
+            model: Pose model when a source does not choose one.
+            regulation_dir: Index of the prevention corpus, for the
+                regulation of each risk; empty: none.
+            save_directory: Where the reports are read and written.
+            upload_directory: Where uploaded videos are kept.
+            llm: The Gemini model that writes the detailed reports and
+                the summaries: ``lite`` (Gemini 3.5 Flash Lite, the
+                default) or ``flash`` (Gemini 3.8 Flash, writes better,
+                for a demonstration). It needs ``GEMINI_API_KEY``; it
+                is called once for each analysis the interface saves,
+                and once for each summary asked for.
+            record: Allow recording the cameras' original video to
+                ``upload_directory`` (for calibration). Off by default:
+                without it the interface offers no recording and refuses
+                it.
+        """
+        import uvicorn
+        from .posture.sessions import SessionManager
+        from .posture.writer import MODELS, gemini
+        from .webapp import WebApp
+
+        if regulation_dir and not (Path(regulation_dir)
+                                   / BM25Index.FILE_NAME).is_file():
+            raise RagError(f"No index in '{regulation_dir}': run index "
+                           "on the prevention corpus, or pass "
+                           "--regulation_dir ''.")
+        web = WebApp(SessionManager(limit), save_directory,
+                     upload_directory, regulation_dir, model,
+                     gemini(MODELS[llm]), MODELS[llm], record)
+        print(f"Interface: http://127.0.0.1:{port} (reports written "
+              f"with {MODELS[llm]})", file=sys.stderr)
+        if record:
+            print(f"Recording allowed: videos go to '{upload_directory}'",
+                  file=sys.stderr)
+        uvicorn.run(web.app, host="127.0.0.1", port=port)
 
     @CliCommand.validated
     def serve(self,

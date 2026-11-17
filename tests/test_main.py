@@ -515,7 +515,8 @@ class TestUnknownCommand:
         assert code == 2
         assert out == ""
         assert f"Unknown command '{name}'" in err
-        assert "evaluate, index, search, search_dataset" in err
+        assert ("analyze, answer, answer_dataset, app, evaluate, index, "
+                "regulation" in err)
 
 
 class TestCommandNeverRuns:

@@ -12,7 +12,9 @@ class Tokenizer:
     still finds it. Then two passes:
 
     1. ``PATTERN``: every run of letters or digits
-       (``max_model_len`` → ``max``, ``model``, ``len``).
+       (``max_model_len`` → ``max``, ``model``, ``len``), each folded to
+       its singular by ``singular`` (``cargas`` → ``carga``), so a
+       question in the singular finds a passage in the plural.
     2. ``SNAKE_PATTERN``: snake_case names kept whole as extra terms
        (``max_model_len``), so a question that quotes a parameter matches
        it exactly, while the parts still match a question that only
@@ -29,9 +31,10 @@ class Tokenizer:
         SNAKE_PATTERN: Two or more runs of letters or digits joined by
             single underscores (``__init__`` or ``a__b`` do not match).
         STOPWORDS: Words to drop from the QUERY terms only (not from the
-            index). In a code corpus words like ``how`` or ``what`` are
-            rare, so BM25 gives them a high idf and they pull in chunks
-            that only share the question wording.
+            index), compared before the plural is folded. In a code
+            corpus words like ``how`` or ``what`` are rare, so BM25 gives
+            them a high idf and they pull in chunks that only share the
+            question wording.
     """
 
     PATTERN = re.compile(r"[a-z0-9]+")
@@ -58,6 +61,13 @@ class Tokenizer:
         "pueden", "puedo", "debe", "deben", "debo", "tengo", "tiene",
         "este", "esto", "estos", "estas", "ese", "esa", "eso", "mas",
         "muy", "si", "no", "ya",
+        # Spanish verbs and words of any question that point to no
+        # passage ("¿qué tiene que hacer...?", "¿para qué sirve...?"):
+        # measured on the prevention dataset, recall@5 0.74 -> 0.82
+        "hacer", "hace", "hacen", "tienen", "tengan", "tener", "da", "dar",
+        "ocurre", "sirve", "entiende", "durante", "hacia", "ante", "propio",
+        "propia", "propios", "propias", "mismo", "misma", "partir",
+        "deberia", "consideran", "considera", "llevar",
     })
 
     @staticmethod
@@ -66,6 +76,30 @@ class Tokenizer:
         decomposed = unicodedata.normalize("NFKD", text.lower())
         return "".join(c for c in decomposed
                        if not unicodedata.combining(c))
+
+    @staticmethod
+    def singular(term: str) -> str:
+        """Fold a plural to its singular, lightly.
+
+        Only the two regular Spanish endings: ``-s`` after a vowel
+        (``cargas`` → ``carga``) and ``-es`` after a consonant
+        (``lesiones`` → ``lesion``, also ``classes`` → ``class``). Most
+        English plurals (``models``) are left as they are. Short words
+        are left alone. A wrong fold (``this`` → ``thi``) does no harm,
+        as long as the chunks and the queries are folded the same way.
+        Full stemming (Snowball) was measured and lost recall.
+
+        Args:
+            term: A plain term, as ``PATTERN`` finds it.
+
+        Returns:
+            The term without its plural ending, or unchanged.
+        """
+        if len(term) > 4 and term.endswith("es") and term[-3] not in "aeiou":
+            return term[:-2]
+        if len(term) > 3 and term.endswith("s") and term[-2] in "aeiou":
+            return term[:-1]
+        return term
 
     def tokenize(self, text: str) -> list[str]:
         """Return the terms of ``text``, repetitions included.
@@ -76,11 +110,11 @@ class Tokenizer:
             text: Any text.
 
         Returns:
-            The plain terms, then the snake_case names, each group in
-            text order. Empty when there are none.
+            The plain terms (in the singular), then the snake_case names,
+            each group in text order. Empty when there are none.
         """
         low_text = self.normalize(text)
-        return (self.PATTERN.findall(low_text)
+        return ([self.singular(t) for t in self.PATTERN.findall(low_text)]
                 + self.SNAKE_PATTERN.findall(low_text))
 
     def tokenize_query(self, text: str) -> list[str]:
@@ -96,8 +130,7 @@ class Tokenizer:
             The terms of ``tokenize`` in the same order, minus the
             stopwords. Empty when the query has only stopwords.
         """
-        return [
-                term
-                for term in self.tokenize(text)
-                if term not in self.STOPWORDS
-                ]
+        low_text = self.normalize(text)
+        return ([self.singular(t) for t in self.PATTERN.findall(low_text)
+                 if t not in self.STOPWORDS]
+                + self.SNAKE_PATTERN.findall(low_text))

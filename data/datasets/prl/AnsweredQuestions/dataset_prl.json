@@ -1,0 +1,452 @@
+{
+  "rag_questions": [
+    {
+      "question_id": "rd-definicion",
+      "question": "¿Qué se entiende legalmente por manipulación manual de cargas?",
+      "answer": "Cualquier operación de transporte o sujeción de una carga por uno o varios trabajadores que entrañe riesgos, en particular dorsolumbares.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 2854,
+          "last_character_index": 3246
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 16568,
+          "last_character_index": 17359
+        }
+      ]
+    },
+    {
+      "question_id": "rd-evitar",
+      "question": "¿Qué tiene que hacer la empresa para que los trabajadores no tengan que levantar cargas a mano?",
+      "answer": "Adoptar medidas técnicas u organizativas para evitarla, en especial equipos para el manejo mecánico.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 3289,
+          "last_character_index": 3589
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 21338,
+          "last_character_index": 21974
+        }
+      ]
+    },
+    {
+      "question_id": "rd-evaluar",
+      "question": "Si no se puede evitar levantar cargas a mano, ¿qué tiene en cuenta la empresa al evaluar el riesgo?",
+      "answer": "Los factores del anexo del Real Decreto y sus efectos combinados.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 3576,
+          "last_character_index": 4008
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 22378,
+          "last_character_index": 24851
+        }
+      ]
+    },
+    {
+      "question_id": "rd-formacion",
+      "question": "¿Qué formación tienen que dar a quien manipula cargas?",
+      "answer": "Formación e información sobre la forma correcta de manipular las cargas y los riesgos de no hacerlo.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 4489,
+          "last_character_index": 5003
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 29526,
+          "last_character_index": 31357
+        }
+      ]
+    },
+    {
+      "question_id": "rd-vigilancia",
+      "question": "¿Quién hace los reconocimientos médicos a los trabajadores que levantan cargas?",
+      "answer": "Personal sanitario competente, según los protocolos de las autoridades sanitarias.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 5362,
+          "last_character_index": 5929
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 33338,
+          "last_character_index": 35796
+        }
+      ]
+    },
+    {
+      "question_id": "rd-carga",
+      "question": "¿Cuándo es peligrosa una carga por sus propias características?",
+      "answer": "Cuando es demasiado pesada o grande, voluminosa, inestable...",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 8006,
+          "last_character_index": 8306
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 38554,
+          "last_character_index": 40348
+        }
+      ]
+    },
+    {
+      "question_id": "rd-torsion",
+      "question": "¿Es peligroso levantar una carga girando o doblando el tronco?",
+      "answer": "Sí: el esfuerzo físico entraña riesgo dorsolumbar en ese caso.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 8639,
+          "last_character_index": 8939
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 45646,
+          "last_character_index": 47014
+        }
+      ]
+    },
+    {
+      "question_id": "rd-80kg",
+      "question": "¿Qué normas antiguas sobre sacos de 80 kilos quedaron derogadas?",
+      "answer": "El Decreto de 15 de noviembre de 1935 y la Orden de 2 de junio de 1961.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 5988,
+          "last_character_index": 6322
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 35798,
+          "last_character_index": 36185
+        }
+      ]
+    },
+    {
+      "question_id": "guia-3kg",
+      "question": "¿A partir de qué peso puede ser un riesgo levantar un objeto?",
+      "answer": "A partir de 3 kg.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 38554,
+          "last_character_index": 40348
+        }
+      ]
+    },
+    {
+      "question_id": "guia-25kg-hombre",
+      "question": "¿Cuál es el peso máximo para un hombre de 30 años en condiciones ideales?",
+      "answer": "25 kg.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 38554,
+          "last_character_index": 40348
+        }
+      ]
+    },
+    {
+      "question_id": "guia-mas-25kg",
+      "question": "¿Levantar más de 25 kilos es un riesgo por sí mismo?",
+      "answer": "Sí, puede constituir por sí mismo un riesgo no tolerable.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 18652,
+          "last_character_index": 18952
+        }
+      ]
+    },
+    {
+      "question_id": "guia-ideales",
+      "question": "¿Qué son unas condiciones ideales para manipular una carga?",
+      "answer": "Carga cerca del cuerpo, a la altura de las caderas, espalda recta, sin giros, buen agarre.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 38554,
+          "last_character_index": 40348
+        }
+      ]
+    },
+    {
+      "question_id": "guia-distancia",
+      "question": "¿A qué distancia del cuerpo hay que llevar la carga?",
+      "answer": "A 25 cm o menos.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 54898,
+          "last_character_index": 55755
+        }
+      ]
+    },
+    {
+      "question_id": "guia-alturas",
+      "question": "¿Entre qué alturas es aceptable mover una carga?",
+      "answer": "Entre la altura de los nudillos y la de los hombros; nunca por encima de la cabeza.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 52355,
+          "last_character_index": 53423
+        }
+      ]
+    },
+    {
+      "question_id": "guia-frecuencia",
+      "question": "¿Cuántos levantamientos por minuto se consideran un riesgo alto?",
+      "answer": "Más de 15, 12 o 10 por minuto según la duración de la tarea.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 53512,
+          "last_character_index": 53812
+        }
+      ]
+    },
+    {
+      "question_id": "guia-transporte",
+      "question": "¿Cuántos metros se puede transportar una carga a mano?",
+      "answer": "Lo ideal, no más de 1 m; más de 10 m supone grandes demandas.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 54898,
+          "last_character_index": 55755
+        }
+      ]
+    },
+    {
+      "question_id": "guia-empuje",
+      "question": "¿Qué fuerza máxima se puede hacer al empujar un carro?",
+      "answer": "Mujeres 240 N inicial y 150 N mantenida; hombres 360 N y 250 N.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 40539,
+          "last_character_index": 40839
+        }
+      ]
+    },
+    {
+      "question_id": "guia-niosh",
+      "question": "¿Qué método recomienda la guía para evaluar levantamientos?",
+      "answer": "La ecuación de NIOSH, entre otros.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 64306,
+          "last_character_index": 65530
+        }
+      ]
+    },
+    {
+      "question_id": "guia-momento",
+      "question": "¿En qué momento de un levantamiento es mayor el riesgo?",
+      "answer": "Al arrancar el levantamiento y al depositar la carga.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 47038,
+          "last_character_index": 47691
+        }
+      ]
+    },
+    {
+      "question_id": "guia-agarre",
+      "question": "¿Qué profundidad máxima debería tener el punto de agarre de una caja?",
+      "answer": "No más de 25 cm.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 42377,
+          "last_character_index": 42941
+        }
+      ]
+    },
+    {
+      "question_id": "ley-derecho",
+      "question": "¿Tienen los trabajadores derecho a que les protejan de los riesgos del trabajo?",
+      "answer": "Sí, a una protección eficaz, con el correlativo deber del empresario.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 45525,
+          "last_character_index": 45825
+        }
+      ]
+    },
+    {
+      "question_id": "ley-formacion",
+      "question": "¿Cuándo tiene que formar la empresa a un trabajador en prevención?",
+      "answer": "Al contratarlo y cuando cambian sus funciones o se introducen nuevas tecnologías o equipos.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 57930,
+          "last_character_index": 58341
+        }
+      ]
+    },
+    {
+      "question_id": "ley-sensibles",
+      "question": "¿Qué protección especial tienen los trabajadores con discapacidad?",
+      "answer": "Una protección específica como trabajadores especialmente sensibles.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 69781,
+          "last_character_index": 70277
+        }
+      ]
+    },
+    {
+      "question_id": "ley-trabajador",
+      "question": "¿Qué obligaciones tiene el propio trabajador en prevención?",
+      "answer": "Velar por su seguridad y la de los demás cumpliendo las medidas de prevención.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 80614,
+          "last_character_index": 81014
+        }
+      ]
+    },
+    {
+      "question_id": "ley-inminente",
+      "question": "¿Qué debe hacer la empresa ante un riesgo grave e inminente?",
+      "answer": "Informar, dar instrucciones para interrumpir la actividad y abandonar el lugar si es necesario.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 60108,
+          "last_character_index": 60408
+        }
+      ]
+    },
+    {
+      "question_id": "reba-tronco",
+      "question": "¿Qué puntuación da REBA a un tronco muy inclinado hacia delante?",
+      "answer": "Más de 60° de flexión puntúa 4; de 20° a 60°, 3.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 5237,
+          "last_character_index": 5537
+        }
+      ]
+    },
+    {
+      "question_id": "reba-actividad",
+      "question": "¿Cuándo se suma un punto por actividad en REBA?",
+      "answer": "Postura estática más de 1 minuto, repeticiones de más de 4 por minuto o cambios posturales bruscos.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 6359,
+          "last_character_index": 7566
+        }
+      ]
+    },
+    {
+      "question_id": "reba-niveles",
+      "question": "¿Qué hay que hacer si REBA da una puntuación de 11?",
+      "answer": "Riesgo muy alto: actuación inmediata.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 8758,
+          "last_character_index": 9058
+        }
+      ]
+    },
+    {
+      "question_id": "reba-origen",
+      "question": "¿Quién desarrolló el método REBA y para qué sirve?",
+      "answer": "Hignett y McAtamney, para estimar el riesgo de desórdenes corporales relacionados con el trabajo.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 626,
+          "last_character_index": 961
+        }
+      ]
+    },
+    {
+      "question_id": "niosh-constante",
+      "question": "¿Cuál es la constante de carga de la ecuación de NIOSH?",
+      "answer": "23 kg.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 6473,
+          "last_character_index": 7281
+        }
+      ]
+    },
+    {
+      "question_id": "niosh-il3",
+      "question": "¿Qué ocurre si el índice de levantamiento supera 3?",
+      "answer": "La tarea es inaceptable y debe modificarse.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 16512,
+          "last_character_index": 17362
+        }
+      ]
+    },
+    {
+      "question_id": "niosh-frecuencia",
+      "question": "¿Durante cuánto tiempo se mide la frecuencia de levantamiento?",
+      "answer": "Como media en un período de 15 minutos.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 11213,
+          "last_character_index": 12045
+        }
+      ]
+    },
+    {
+      "question_id": "niosh-giro",
+      "question": "¿Dónde se mide el ángulo de giro en la ecuación de NIOSH?",
+      "answer": "En el origen, y en el destino si hay que controlar la carga.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 8972,
+          "last_character_index": 10548
+        }
+      ]
+    },
+    {
+      "question_id": "niosh-factores",
+      "question": "¿Qué factores multiplican la constante de carga en NIOSH?",
+      "answer": "Distancia horizontal, altura, desplazamiento vertical, asimetría, frecuencia y agarre.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 3491,
+          "last_character_index": 3791
+        }
+      ]
+    }
+  ]
+}

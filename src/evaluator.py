@@ -21,11 +21,23 @@ class Evaluator:
             ``max_context_length``.
         MIN_IOU: Smallest overlap that counts a correct source as found.
         CUTOFFS: The k values reported (recall@1, @3, @5, @10).
+        any_source: Count a question as found when ANY of its sources is
+            (for answers that several documents give word for word, as a
+            guide that reproduces the articles of a law). False is the
+            moulinette's metric: the share of its sources found.
     """
 
     MAX_CNTX_LEN: int = 2000
     MIN_IOU: float = 0.05
     CUTOFFS: tuple[int, ...] = (1, 3, 5, 10)
+
+    def __init__(self, any_source: bool = False) -> None:
+        """Choose how a question with several sources counts.
+
+        Args:
+            any_source: See the class attributes.
+        """
+        self.any_source = any_source
 
     def _iou(self,
              a: MinimalSource,
@@ -90,7 +102,8 @@ class Evaluator:
             for source in correct
             if self._is_found(source, result)
         )
-
+        if self.any_source:
+            return 1.0 if found else 0.0
         return found / len(correct)
 
     def _validate_dataset(self,

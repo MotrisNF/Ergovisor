@@ -40,6 +40,23 @@ SERVE_ARGS ?=
 serve:
 	@uv run -m src serve $(SERVE_ARGS)
 
+# Graphical interface for the posture analysis until Ctrl+C; open
+# http://127.0.0.1:8000 (this computer only). Ctrl+C stops every camera
+# and video, and each one saves its report first.
+# The detailed reports (written by themselves when an analysis ends) and
+# the summaries are written by Gemini (needs
+# GEMINI_API_KEY): LLM=lite (Gemini 3.5 Flash Lite, default) or LLM=flash
+# (Gemini 3.8 Flash, writes better, for a demonstration): make app LLM=flash
+# Recording the cameras' original video is off unless RECORD=1 (for
+# calibration videos): make app RECORD=1
+# Options for `app`: APP_ARGS="--port 8080 --limit 2 --model full"
+LLM      ?= lite
+RECORD   ?= 0
+APP_ARGS ?=
+
+app:
+	@uv run -m src app --llm $(LLM) $(if $(filter 1,$(RECORD)),--record) $(APP_ARGS)
+
 # Each rule keeps its own mypy cache: the cache is only valid for the
 # flags that built it, so sharing one made every switch between lint and
 # lint-strict re-check torch, transformers... from scratch (~50 s, not ~2 s).
@@ -310,4 +327,4 @@ cleandata:
 		find $(BASE_DATA)/output -type f -name '*.json' -delete; fi
 	@echo "Index and generated outputs removed"
 
-.PHONY: all install run debug serve lint lint-strict test test_rag test_rag_base test_corpus test_index test_retrieval test_limits test_limits_cached test_answer test_answer_dataset clean cleandata
+.PHONY: all install run debug serve app lint lint-strict test test_rag test_rag_base test_corpus test_index test_retrieval test_limits test_limits_cached test_answer test_answer_dataset clean cleandata

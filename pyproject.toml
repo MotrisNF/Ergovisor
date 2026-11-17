@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=2.2.6",
     "pillow>=12.3.0",
     "pydantic>=2.13.5",
+    "python-docx>=1.2.0",
     "safetensors>=0.8.0",
     "tokenizers>=0.23.2",
     "torch>=2.14.1",

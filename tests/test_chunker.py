@@ -560,3 +560,43 @@ class TestPyChunkerRealCorpus:
         py, fixed = share(PyChunker(2000)), share(FixedSizeChunker(2000))
         assert py > 0.5
         assert py > fixed + 0.15
+
+
+class TestMdHeadings:
+    """``MdChunker`` gives each chunk the title and section it is in."""
+
+    TEXT = ("# Ley\n\nintro\n\n## Artículo 1. Objeto\n\n" + "uno " * 30
+            + "\n\n## Artículo 2. Emergencias\n\n" + "dos " * 30)
+
+    def chunks(self, text: str, size: int = 60) -> list[Chunk]:
+        return MdChunker(size).chunk_document(make_doc(text))
+
+    def test_title_and_last_heading_before(self) -> None:
+        """A chunk inside article 2 carries the title and article 2."""
+        last = self.chunks(self.TEXT)[-1]
+        assert last.text.startswith("dos")
+        assert last.heading == "Ley Artículo 2. Emergencias"
+
+    def test_heading_inside_chunk_not_repeated(self) -> None:
+        """The first chunk starts at the title: only the title."""
+        assert self.chunks(self.TEXT)[0].heading == "Ley"
+
+    def test_without_headings(self) -> None:
+        """Plain text keeps an empty heading."""
+        assert all(c.heading == "" for c in self.chunks("word " * 40))
+
+    def test_comment_in_code_block_is_not_a_heading(self) -> None:
+        """A ``#`` line inside a fenced block is a shell comment."""
+        text = ("# Guide\n\n" + FENCE + "bash\n# install it\npip x\n"
+                + FENCE + "\n\n" + "word " * 30)
+        assert self.chunks(text)[-1].heading == "Guide"
+
+    def test_text_and_offsets_unchanged(self) -> None:
+        """Only the heading is added: same ranges as FixedSizeChunker."""
+        doc = make_doc(self.TEXT)
+        plain = FixedSizeChunker(60).chunk_document(doc)
+        with_headings = MdChunker(60).chunk_document(doc)
+        assert ([(c.first_character_index, c.last_character_index, c.text)
+                 for c in with_headings]
+                == [(c.first_character_index, c.last_character_index, c.text)
+                    for c in plain])

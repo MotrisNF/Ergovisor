@@ -54,8 +54,33 @@ def _quiet() -> Iterator[None]:
         os.close(saved)
 
 
+def download(url: str, path: Path, name: str) -> Path:
+    """A model file, downloaded the first time and then kept.
+
+    Args:
+        url: Where to download it from.
+        path: Where it is kept.
+        name: What it is, for the error.
+
+    Raises:
+        RagError: It is not there and cannot be downloaded.
+    """
+    if path.is_file():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".part")
+    try:
+        urllib.request.urlretrieve(url, partial)
+    except OSError as e:
+        partial.unlink(missing_ok=True)
+        raise RagError(f"Cannot download the {name} model: "
+                       f"{type(e).__name__}") from e
+    partial.rename(path)
+    return path
+
+
 def model_path(model: Model = "full", cache: Path = CACHE) -> Path:
-    """The model file, downloaded the first time.
+    """The pose model file, downloaded the first time.
 
     Args:
         model: ``lite`` is fastest, ``heavy`` most precise.
@@ -64,19 +89,9 @@ def model_path(model: Model = "full", cache: Path = CACHE) -> Path:
     Raises:
         RagError: It is not there and cannot be downloaded.
     """
-    path = cache / f"pose_landmarker_{model}.task"
-    if path.is_file():
-        return path
-    cache.mkdir(parents=True, exist_ok=True)
-    partial = path.with_suffix(".part")
-    try:
-        urllib.request.urlretrieve(MODEL_URL.format(model), partial)
-    except OSError as e:
-        partial.unlink(missing_ok=True)
-        raise RagError(f"Cannot download the pose model '{model}': "
-                       f"{type(e).__name__}") from e
-    partial.rename(path)
-    return path
+    return download(MODEL_URL.format(model),
+                    cache / f"pose_landmarker_{model}.task",
+                    f"pose '{model}'")
 
 
 class PoseEstimator:

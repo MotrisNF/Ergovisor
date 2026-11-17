@@ -385,3 +385,22 @@ class TestMatchesMoulinette:
         assert report.recall == pytest.approx(expected)
         assert report.missing == []
         assert report.unknown == []
+
+
+def test_any_source_counts_one_of_several() -> None:
+    """With ``any_source``, one source of two found is the whole
+    question; without it, half (the moulinette's metric)."""
+    from src.evaluator import Evaluator
+    from src.models import (AnsweredQuestion, MinimalAnswer, MinimalSource,
+                            RagDataset, StudentSearchResults)
+    law = MinimalSource(file_path="law.md", first_character_index=0,
+                        last_character_index=100)
+    guide = MinimalSource(file_path="guide.md", first_character_index=0,
+                          last_character_index=100)
+    dataset = RagDataset(rag_questions=[AnsweredQuestion(
+        question_id="q", question="?", answer="a", sources=[law, guide])])
+    results = StudentSearchResults(search_results=[MinimalAnswer(
+        question_id="q", question="?", retrieved_sources=[guide],
+        answer="")], k=1)
+    assert Evaluator().evaluate(results, dataset, 1).recall[1] == 0.5
+    assert Evaluator(True).evaluate(results, dataset, 1).recall[1] == 1.0

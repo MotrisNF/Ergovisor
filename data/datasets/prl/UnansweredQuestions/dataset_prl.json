@@ -1,0 +1,140 @@
+{
+  "rag_questions": [
+    {
+      "question_id": "rd-definicion",
+      "question": "¿Qué se entiende legalmente por manipulación manual de cargas?"
+    },
+    {
+      "question_id": "rd-evitar",
+      "question": "¿Qué tiene que hacer la empresa para que los trabajadores no tengan que levantar cargas a mano?"
+    },
+    {
+      "question_id": "rd-evaluar",
+      "question": "Si no se puede evitar levantar cargas a mano, ¿qué tiene en cuenta la empresa al evaluar el riesgo?"
+    },
+    {
+      "question_id": "rd-formacion",
+      "question": "¿Qué formación tienen que dar a quien manipula cargas?"
+    },
+    {
+      "question_id": "rd-vigilancia",
+      "question": "¿Quién hace los reconocimientos médicos a los trabajadores que levantan cargas?"
+    },
+    {
+      "question_id": "rd-carga",
+      "question": "¿Cuándo es peligrosa una carga por sus propias características?"
+    },
+    {
+      "question_id": "rd-torsion",
+      "question": "¿Es peligroso levantar una carga girando o doblando el tronco?"
+    },
+    {
+      "question_id": "rd-80kg",
+      "question": "¿Qué normas antiguas sobre sacos de 80 kilos quedaron derogadas?"
+    },
+    {
+      "question_id": "guia-3kg",
+      "question": "¿A partir de qué peso puede ser un riesgo levantar un objeto?"
+    },
+    {
+      "question_id": "guia-25kg-hombre",
+      "question": "¿Cuál es el peso máximo para un hombre de 30 años en condiciones ideales?"
+    },
+    {
+      "question_id": "guia-mas-25kg",
+      "question": "¿Levantar más de 25 kilos es un riesgo por sí mismo?"
+    },
+    {
+      "question_id": "guia-ideales",
+      "question": "¿Qué son unas condiciones ideales para manipular una carga?"
+    },
+    {
+      "question_id": "guia-distancia",
+      "question": "¿A qué distancia del cuerpo hay que llevar la carga?"
+    },
+    {
+      "question_id": "guia-alturas",
+      "question": "¿Entre qué alturas es aceptable mover una carga?"
+    },
+    {
+      "question_id": "guia-frecuencia",
+      "question": "¿Cuántos levantamientos por minuto se consideran un riesgo alto?"
+    },
+    {
+      "question_id": "guia-transporte",
+      "question": "¿Cuántos metros se puede transportar una carga a mano?"
+    },
+    {
+      "question_id": "guia-empuje",
+      "question": "¿Qué fuerza máxima se puede hacer al empujar un carro?"
+    },
+    {
+      "question_id": "guia-niosh",
+      "question": "¿Qué método recomienda la guía para evaluar levantamientos?"
+    },
+    {
+      "question_id": "guia-momento",
+      "question": "¿En qué momento de un levantamiento es mayor el riesgo?"
+    },
+    {
+      "question_id": "guia-agarre",
+      "question": "¿Qué profundidad máxima debería tener el punto de agarre de una caja?"
+    },
+    {
+      "question_id": "ley-derecho",
+      "question": "¿Tienen los trabajadores derecho a que les protejan de los riesgos del trabajo?"
+    },
+    {
+      "question_id": "ley-formacion",
+      "question": "¿Cuándo tiene que formar la empresa a un trabajador en prevención?"
+    },
+    {
+      "question_id": "ley-sensibles",
+      "question": "¿Qué protección especial tienen los trabajadores con discapacidad?"
+    },
+    {
+      "question_id": "ley-trabajador",
+      "question": "¿Qué obligaciones tiene el propio trabajador en prevención?"
+    },
+    {
+      "question_id": "ley-inminente",
+      "question": "¿Qué debe hacer la empresa ante un riesgo grave e inminente?"
+    },
+    {
+      "question_id": "reba-tronco",
+      "question": "¿Qué puntuación da REBA a un tronco muy inclinado hacia delante?"
+    },
+    {
+      "question_id": "reba-actividad",
+      "question": "¿Cuándo se suma un punto por actividad en REBA?"
+    },
+    {
+      "question_id": "reba-niveles",
+      "question": "¿Qué hay que hacer si REBA da una puntuación de 11?"
+    },
+    {
+      "question_id": "reba-origen",
+      "question": "¿Quién desarrolló el método REBA y para qué sirve?"
+    },
+    {
+      "question_id": "niosh-constante",
+      "question": "¿Cuál es la constante de carga de la ecuación de NIOSH?"
+    },
+    {
+      "question_id": "niosh-il3",
+      "question": "¿Qué ocurre si el índice de levantamiento supera 3?"
+    },
+    {
+      "question_id": "niosh-frecuencia",
+      "question": "¿Durante cuánto tiempo se mide la frecuencia de levantamiento?"
+    },
+    {
+      "question_id": "niosh-giro",
+      "question": "¿Dónde se mide el ángulo de giro en la ecuación de NIOSH?"
+    },
+    {
+      "question_id": "niosh-factores",
+      "question": "¿Qué factores multiplican la constante de carga en NIOSH?"
+    }
+  ]
+}

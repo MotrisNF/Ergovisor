@@ -39,9 +39,15 @@ class Chunk(MinimalSource):
 
     Attributes:
         text: The characters of the file inside the range.
+        heading: Where the chunk sits in its document: the document's
+            title and the last heading before the chunk (``MdChunker``
+            fills it; empty for the other chunkers). Indexed with the
+            text, so a passage is found by the article or section it
+            belongs to even when its own words do not name it.
     """
 
     text: str
+    heading: str = ""
 
     def order_key(self) -> tuple[str, int]:
         """The key the index sorts its chunks by: file, then position.

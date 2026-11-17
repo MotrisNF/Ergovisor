@@ -111,6 +111,32 @@ class TestTokenizer:
         tokens = Tokenizer().tokenize("llm.generate 0.10.1 lora.md")
         assert all("." not in t for t in tokens)
 
+    @pytest.mark.parametrize(("term", "folded"), [
+        ("cargas", "carga"),
+        ("lesiones", "lesion"),
+        ("trabajadores", "trabajador"),
+        ("models", "models"),
+        ("classes", "class"),
+        ("carga", "carga"),
+        ("mes", "mes"),
+        ("gas", "gas"),
+        ("bus", "bus"),
+        ("256", "256"),
+    ])
+    def test_singular(self, term: str, folded: str) -> None:
+        """Regular plurals lose their ending; short words do not."""
+        assert Tokenizer.singular(term) == folded
+
+    def test_plural_matches_singular(self) -> None:
+        """A question in the singular finds a passage in the plural."""
+        index = BM25Index.build(make_chunks("las cargas pesadas",
+                                            "otro texto"))
+        assert index.search("carga", 1)[0].chunk.text == "las cargas pesadas"
+
+    def test_snake_names_not_folded(self) -> None:
+        """A snake_case name stays exactly as written."""
+        assert "max_seqs" in Tokenizer().tokenize("max_seqs")
+
     def test_pattern_compiled_once(self) -> None:
         """The patterns are shared, precompiled class attributes."""
         assert Tokenizer.PATTERN is Tokenizer().PATTERN
@@ -141,11 +167,21 @@ class TestQueryStopwords:
         assert Tokenizer().tokenize_query(text) == []
 
     def test_stopwords_are_lowercase_terms(self) -> None:
-        """Every stopword is a term ``tokenize`` can produce, or it would
-        never match.
+        """Every stopword is one term of ``PATTERN`` (they are compared
+        before the plural is folded), or it would never match.
         """
         for word in Tokenizer.STOPWORDS:
-            assert Tokenizer().tokenize(word) == [word]
+            assert Tokenizer.PATTERN.findall(
+                Tokenizer.normalize(word)) == [word]
+
+    def test_stopword_compared_before_folding(self) -> None:
+        """A plural stopword is dropped, not folded into a term that is
+        not one (``does`` would become ``doe``)."""
+        assert Tokenizer().tokenize_query("does propios") == []
+
+    def test_query_terms_folded(self) -> None:
+        """The words that stay are folded like the chunks."""
+        assert Tokenizer().tokenize_query("¿Qué cargas?") == ["carga"]
 
     def test_index_not_filtered(self) -> None:
         """Only the query is filtered: the chunks keep their stopwords."""
@@ -256,6 +292,17 @@ class TestBuild:
         assert index._postings["keye"] == {0: 1}
         assert index._postings["py"] == {0: 1}
         assert index.search("keye", 1)[0].chunk == chunk
+
+    def test_heading_terms_indexed(self) -> None:
+        """The heading is searchable even when the text never says it,
+        and the text stays as it was."""
+        chunk = Chunk(file_path="data/raw/ley.md", first_character_index=0,
+                      last_character_index=9, text="planes de",
+                      heading="Ley Artículo 20. Medidas de emergencia")
+        index = BM25Index.build([chunk])
+        assert index._postings["emergencia"] == {0: 1}
+        assert index.search("emergencias", 1)[0].chunk == chunk
+        assert index._chunks[0].text == "planes de"
 
     def test_path_terms_not_in_text(self) -> None:
         """Only the indexed terms change: text and offsets stay."""

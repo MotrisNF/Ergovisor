@@ -19,6 +19,8 @@ from PIL import Image, ImageDraw, ImageFont
 from ..exceptions import RagError
 from .angles import Angles
 from .lifting import Lift
+from .office import (MIN_DISTANCE_CM, NECK_EXTENSION, NECK_FLEXION,
+                     NECK_TILT, NECK_TURN, OfficeState)
 from .reba import Reba
 from .skeleton import Point, Skeleton
 from .timeline import Event
@@ -64,6 +66,12 @@ def _clock(second: float) -> str:
     return f"{int(second // 60)}:{second % 60:04.1f}"
 
 
+def _minutes(seconds: float) -> str:
+    """``12:05`` (minutes and seconds)."""
+    whole = int(max(0.0, seconds))
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
 def _angle(value: float | None) -> str:
     """``45°``, or a dash when not measured."""
     return "–" if value is None else f"{value:.0f}°"
@@ -100,14 +108,24 @@ class Overlay:
     def draw(self, image: NDArray[np.uint8], second: float,
              skeleton: Skeleton | None, angles: Angles | None,
              reba: Reba | None, event: Event | None,
-             lift: Lift | None = None) -> NDArray[np.uint8]:
-        """The frame with the analysis on it (RGB)."""
+             lift: Lift | None = None,
+             office: OfficeState | None = None) -> NDArray[np.uint8]:
+        """The frame with the analysis on it (RGB).
+
+        At a screen (``office``), the panel shows the screen work
+        instead of REBA, and only the upper body is drawn.
+        """
         picture = Image.fromarray(image)
         pen = ImageDraw.Draw(picture, "RGBA")
         colour = COLOURS[reba.level] if reba is not None else NO_SCORE
+        if office is not None:
+            colour = self._office_colour(office)
         if skeleton is not None and skeleton.pixels is not None:
             self._skeleton(pen, skeleton, picture.size, colour)
-        self._panel(pen, second, angles, reba, colour)
+        if office is not None:
+            self._office(pen, second, office, colour)
+        else:
+            self._panel(pen, second, angles, reba, colour)
         if lift is not None:
             self._lift(pen, lift, picture.size)
         if event is not None:
@@ -180,6 +198,45 @@ class Overlay:
         lines.append(_clock(second))
         height = 14 + 30 * len(lines)
         pen.rectangle([10, 10, 470, 10 + height], fill=(0, 0, 0, 160))
+        pen.rectangle([10, 10, 18, 10 + height], fill=colour)
+        for number, line in enumerate(lines):
+            pen.text((28, 18 + 30 * number), line, fill=(255, 255, 255),
+                     font=self._font if number == 0 else self._small)
+
+    @staticmethod
+    def _office_colour(office: OfficeState) -> tuple[int, int, int]:
+        """Green when the screen work is right now within the guide,
+        yellow or orange when something is off."""
+        face = office.face
+        if face is None:
+            return NO_SCORE
+        if face.distance_cm is not None and face.distance_cm < MIN_DISTANCE_CM:
+            return COLOURS[3]
+        if (face.pitch > NECK_FLEXION or face.pitch < -NECK_EXTENSION
+                or abs(face.yaw) > NECK_TURN or abs(face.roll) > NECK_TILT):
+            return COLOURS[2]
+        return COLOURS[1]
+
+    def _office(self, pen: ImageDraw.ImageDraw, second: float,
+                office: OfficeState, colour: tuple[int, int, int]) -> None:
+        """The screen work, top left: distance, neck, blinks, rests."""
+        face = office.face
+        lines = ["Puesto con pantalla"]
+        if face is None:
+            lines.append("Cara no visible (mirando a otro lado)")
+        else:
+            distance = (f"{face.distance_cm:.0f} cm"
+                        if face.distance_cm is not None else "–")
+            lines += [f"Distancia {distance}   Cuello {face.pitch:+.0f}° "
+                      f"giro {face.yaw:+.0f}° incl. {face.roll:+.0f}°"]
+        rate = (f"{office.blinks_per_minute:.0f}/min"
+                if office.blinks_per_minute is not None else "–")
+        lines += [f"Parpadeo {rate}   Sin descanso visual "
+                  f"{_minutes(office.since_rest)}",
+                  f"Sin pausa {_minutes(office.since_break)}   "
+                  f"{_clock(second)}"]
+        height = 14 + 30 * len(lines)
+        pen.rectangle([10, 10, 520, 10 + height], fill=(0, 0, 0, 160))
         pen.rectangle([10, 10, 18, 10 + height], fill=colour)
         for number, line in enumerate(lines):
             pen.text((28, 18 + 30 * number), line, fill=(255, 255, 255),

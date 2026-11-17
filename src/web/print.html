@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Informe</title>
+  <link rel="stylesheet" href="/static/print.css">
+</head>
+<body>
+  <div class="toolbar">
+    <span id="toolbar-title">Cargando el documento…</span>
+    <span class="toolbar-actions">
+      <button type="button" id="print" disabled>Imprimir o guardar en PDF</button>
+      <button type="button" id="close" class="secondary">Cerrar</button>
+    </span>
+  </div>
+  <main class="sheet" id="document"></main>
+  <script src="/static/markdown.js"></script>
+  <script src="/static/print.js"></script>
+</body>
+</html>

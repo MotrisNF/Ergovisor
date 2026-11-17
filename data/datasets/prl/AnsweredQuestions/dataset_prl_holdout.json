@@ -1,0 +1,245 @@
+{
+  "rag_questions": [
+    {
+      "question_id": "h-rd-suelo",
+      "question": "¿Influye el estado del suelo en el riesgo de manipular cargas?",
+      "answer": "Sí: un suelo irregular o resbaladizo aumenta el riesgo.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 9245,
+          "last_character_index": 9545
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 48059,
+          "last_character_index": 50464
+        }
+      ]
+    },
+    {
+      "question_id": "h-rd-espacio",
+      "question": "¿Qué pasa si no hay altura suficiente para manipular la carga?",
+      "answer": "El espacio libre insuficiente aumenta el riesgo dorsolumbar.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 9116,
+          "last_character_index": 9416
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 47767,
+          "last_character_index": 48067
+        }
+      ]
+    },
+    {
+      "question_id": "h-rd-descanso",
+      "question": "¿Es un riesgo no tener tiempo para recuperarse entre esfuerzos?",
+      "answer": "Sí, es una exigencia de la actividad que entraña riesgo.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 10089,
+          "last_character_index": 10389
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 52355,
+          "last_character_index": 53423
+        }
+      ]
+    },
+    {
+      "question_id": "h-rd-individuales",
+      "question": "¿Qué características de la persona aumentan el riesgo al cargar pesos?",
+      "answer": "La falta de aptitud física, ropa inadecuada, falta de formación...",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 10370,
+          "last_character_index": 10670
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 56137,
+          "last_character_index": 58606
+        }
+      ]
+    },
+    {
+      "question_id": "h-rd-ambiente",
+      "question": "¿El calor o la mala iluminación afectan al riesgo de manipular cargas?",
+      "answer": "Sí, son características del medio de trabajo que aumentan el riesgo.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/rd_487_1997_manipulacion_cargas.md",
+          "first_character_index": 9673,
+          "last_character_index": 9973
+        },
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 48059,
+          "last_character_index": 50464
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-principios",
+      "question": "¿Cuáles son los principios generales de la acción preventiva?",
+      "answer": "Evitar los riesgos, evaluar los que no se puedan evitar, combatirlos en su origen...",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 48597,
+          "last_character_index": 48897
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-equipos",
+      "question": "¿Debe la empresa dar equipos de protección a los trabajadores?",
+      "answer": "Sí, equipos adecuados y de protección individual cuando haga falta.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 55040,
+          "last_character_index": 55340
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-emergencia",
+      "question": "¿Qué tiene que preparar la empresa para emergencias?",
+      "answer": "Analizar las emergencias y adoptar medidas de primeros auxilios, incendios y evacuación.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 59010,
+          "last_character_index": 59636
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-reconocimiento",
+      "question": "¿Es obligatorio hacerse los reconocimientos médicos de la empresa?",
+      "answer": "Solo con el consentimiento del trabajador, salvo excepciones.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 62703,
+          "last_character_index": 63394
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-delegados",
+      "question": "¿Quiénes son los delegados de prevención?",
+      "answer": "Representantes de los trabajadores con funciones en prevención.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 99170,
+          "last_character_index": 99470
+        }
+      ]
+    },
+    {
+      "question_id": "h-ley-informacion",
+      "question": "¿Qué información debe recibir un trabajador sobre los riesgos de su puesto?",
+      "answer": "Los riesgos, las medidas de protección y las de emergencia.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ley_31_1995_prevencion_riesgos.md",
+          "first_character_index": 56306,
+          "last_character_index": 56606
+        }
+      ]
+    },
+    {
+      "question_id": "h-guia-pausas",
+      "question": "¿Cómo se puede reducir la fatiga en tareas de carga?",
+      "answer": "Con pausas, descansos y cambios de tarea.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 60868,
+          "last_character_index": 63413
+        }
+      ]
+    },
+    {
+      "question_id": "h-guia-pacientes",
+      "question": "¿Cómo se debe mover a un paciente que no puede moverse solo?",
+      "answer": "Con ayudas mecánicas y, si no, entre varias personas.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/guia_tecnica_mmc_2024.md",
+          "first_character_index": 24853,
+          "last_character_index": 27028
+        }
+      ]
+    },
+    {
+      "question_id": "h-reba-antebrazo",
+      "question": "¿Cómo se puntúa el codo en el método REBA?",
+      "answer": "60-100° de flexión puntúa 1; menos de 60 o más de 100, 2.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 6023,
+          "last_character_index": 6323
+        }
+      ]
+    },
+    {
+      "question_id": "h-reba-agarre",
+      "question": "¿Cómo influye la calidad del agarre en la puntuación REBA?",
+      "answer": "Suma de 0 (bueno) a 3 (inaceptable).",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 7792,
+          "last_character_index": 8092
+        }
+      ]
+    },
+    {
+      "question_id": "h-reba-ejemplo",
+      "question": "¿Hay algún ejemplo de REBA aplicado en un hospital?",
+      "answer": "Un sanitario que desliza a un paciente hacia la cabecera de la cama.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_601.md",
+          "first_character_index": 9030,
+          "last_character_index": 9437
+        }
+      ]
+    },
+    {
+      "question_id": "h-niosh-compresion",
+      "question": "¿Qué compresión en la espalda se toma como límite en NIOSH?",
+      "answer": "3,4 kN.",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 3882,
+          "last_character_index": 4520
+        }
+      ]
+    },
+    {
+      "question_id": "h-niosh-limites",
+      "question": "¿En qué casos no se puede usar la ecuación de NIOSH?",
+      "answer": "Con una mano, sentado o arrodillado, cargando personas, de forma brusca...",
+      "sources": [
+        {
+          "file_path": "data/raw/prl/ntp_477.md",
+          "first_character_index": 17843,
+          "last_character_index": 18695
+        }
+      ]
+    }
+  ]
+}

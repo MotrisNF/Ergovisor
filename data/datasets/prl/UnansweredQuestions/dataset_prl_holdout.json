@@ -1,0 +1,76 @@
+{
+  "rag_questions": [
+    {
+      "question_id": "h-rd-suelo",
+      "question": "¿Influye el estado del suelo en el riesgo de manipular cargas?"
+    },
+    {
+      "question_id": "h-rd-espacio",
+      "question": "¿Qué pasa si no hay altura suficiente para manipular la carga?"
+    },
+    {
+      "question_id": "h-rd-descanso",
+      "question": "¿Es un riesgo no tener tiempo para recuperarse entre esfuerzos?"
+    },
+    {
+      "question_id": "h-rd-individuales",
+      "question": "¿Qué características de la persona aumentan el riesgo al cargar pesos?"
+    },
+    {
+      "question_id": "h-rd-ambiente",
+      "question": "¿El calor o la mala iluminación afectan al riesgo de manipular cargas?"
+    },
+    {
+      "question_id": "h-ley-principios",
+      "question": "¿Cuáles son los principios generales de la acción preventiva?"
+    },
+    {
+      "question_id": "h-ley-equipos",
+      "question": "¿Debe la empresa dar equipos de protección a los trabajadores?"
+    },
+    {
+      "question_id": "h-ley-emergencia",
+      "question": "¿Qué tiene que preparar la empresa para emergencias?"
+    },
+    {
+      "question_id": "h-ley-reconocimiento",
+      "question": "¿Es obligatorio hacerse los reconocimientos médicos de la empresa?"
+    },
+    {
+      "question_id": "h-ley-delegados",
+      "question": "¿Quiénes son los delegados de prevención?"
+    },
+    {
+      "question_id": "h-ley-informacion",
+      "question": "¿Qué información debe recibir un trabajador sobre los riesgos de su puesto?"
+    },
+    {
+      "question_id": "h-guia-pausas",
+      "question": "¿Cómo se puede reducir la fatiga en tareas de carga?"
+    },
+    {
+      "question_id": "h-guia-pacientes",
+      "question": "¿Cómo se debe mover a un paciente que no puede moverse solo?"
+    },
+    {
+      "question_id": "h-reba-antebrazo",
+      "question": "¿Cómo se puntúa el codo en el método REBA?"
+    },
+    {
+      "question_id": "h-reba-agarre",
+      "question": "¿Cómo influye la calidad del agarre en la puntuación REBA?"
+    },
+    {
+      "question_id": "h-reba-ejemplo",
+      "question": "¿Hay algún ejemplo de REBA aplicado en un hospital?"
+    },
+    {
+      "question_id": "h-niosh-compresion",
+      "question": "¿Qué compresión en la espalda se toma como límite en NIOSH?"
+    },
+    {
+      "question_id": "h-niosh-limites",
+      "question": "¿En qué casos no se puede usar la ecuación de NIOSH?"
+    }
+  ]
+}

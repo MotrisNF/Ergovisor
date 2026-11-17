@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>En directo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f62fe'/%3E%3Ccircle cx='16' cy='8' r='3.2' fill='white'/%3E%3Cpath d='M16 12v9M10 15h12M16 21l-4 7M16 21l4 7' stroke='white' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <nav class="tabs" aria-label="Secciones">
+      <a href="#/directo" data-tab="directo">En directo <span class="count" id="live-count">0</span></a>
+      <a href="#/informes" data-tab="informes">Informes <span class="count" id="report-count">0</span></a>
+    </nav>
+    <div class="topbar-actions">
+      <button class="button primary" id="add" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        Añadir fuente
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="view-directo" class="view" hidden>
+      <div class="view-header">
+        <div>
+          <h1>En directo</h1>
+          <p class="muted" id="live-summary">Cámaras y vídeos analizándose ahora.</p>
+        </div>
+      </div>
+      <div class="grid" id="sessions"></div>
+      <div class="empty" id="sessions-empty" hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="12" width="28" height="24" rx="3"/><path d="M33 20l10-6v20l-10-6z"/></svg>
+        <h2>No hay ninguna fuente analizándose</h2>
+        <p class="muted">Añade una cámara del equipo, una cámara IP o un vídeo grabado.</p>
+        <button class="button primary" type="button" data-action="add">Añadir fuente</button>
+      </div>
+    </section>
+
+    <section id="view-informes" class="view" hidden>
+      <div class="view-header">
+        <div>
+          <h1>Informes</h1>
+          <p class="muted">Análisis guardados, del más reciente al más antiguo.</p>
+        </div>
+        <div class="header-actions">
+          <input class="search" id="report-filter" type="search" placeholder="Buscar por fuente o fecha" aria-label="Buscar informes">
+          <button class="button" id="summarise" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>
+            Crear resumen
+          </button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="reports">
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Fuente</th><th class="num">Duración</th>
+              <th>Riesgo máximo</th><th class="num">Momentos de riesgo</th>
+              <th class="num">Levantamientos</th><th class="num">IL máx.</th>
+              <th class="num">Normativa</th><th class="actions"><span class="sr-only">Acciones</span></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="empty" id="reports-empty" hidden>
+        <h2>Todavía no hay informes</h2>
+        <p class="muted">Cada fuente que se cierra o termina guarda aquí su informe.</p>
+      </div>
+
+      <div id="summaries-block" hidden>
+        <h2 class="block-title">Resúmenes</h2>
+        <div class="table-wrap">
+          <table class="table" id="summaries">
+            <thead><tr><th>Creado</th><th>Resumen</th><th class="num">Informes</th><th>Modelo</th>
+              <th class="actions"><span class="sr-only">Acciones</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-resumen" class="view report" hidden></section>
+
+    <section id="view-informe" class="view report" hidden></section>
+  </main>
+
+  <dialog id="add-dialog" class="dialog">
+    <form method="dialog" id="add-form">
+      <header class="dialog-header">
+        <h2>Añadir fuente</h2>
+        <button class="icon-button" value="cancel" type="submit" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <div class="segmented" role="tablist">
+        <button type="button" role="tab" data-kind="camera" aria-selected="true">Cámara del equipo</button>
+        <button type="button" role="tab" data-kind="address" aria-selected="false">Cámara IP</button>
+        <button type="button" role="tab" data-kind="video" aria-selected="false">Vídeo grabado</button>
+      </div>
+
+      <div class="pane" data-pane="camera">
+        <p class="muted">Cámaras conectadas a este ordenador.</p>
+        <div class="choices" id="devices"></div>
+      </div>
+
+      <div class="pane" data-pane="address" hidden>
+        <label class="field">
+          <span>Dirección del vídeo</span>
+          <input id="address" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+                 placeholder="rtsp://usuario:clave@192.168.1.50:554/stream1">
+        </label>
+        <ul class="hints">
+          <li><strong>Cámara de vigilancia (RTSP):</strong> <code>rtsp://usuario:clave@IP:554/ruta</code>; la ruta viene en el manual de la cámara.</li>
+          <li><strong>Móvil con IP Webcam:</strong> <code>http://IP_DEL_MÓVIL:8080/video</code></li>
+          <li>La contraseña nunca se guarda en los informes.</li>
+        </ul>
+      </div>
+
+      <div class="pane" data-pane="video" hidden>
+        <label class="drop" id="drop">
+          <input id="file" type="file" accept="video/*">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+          <span id="file-name">Arrastra un vídeo aquí o haz clic para elegirlo</span>
+        </label>
+        <div class="upload" id="upload" hidden>
+          <div class="bar"><span id="upload-bar"></span></div>
+          <small class="muted" id="upload-text"></small>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Modelo de pose</span>
+        <select id="model">
+          <option value="lite">Rápido (lite): recomendado con varias fuentes</option>
+          <option value="full">Equilibrado (full)</option>
+          <option value="heavy">Preciso (heavy): más lento</option>
+        </select>
+      </label>
+      <label class="check" id="record-option" hidden>
+        <input type="checkbox" id="record">
+        <span>Grabar el vídeo de la cámara <small>(original, sin el esqueleto; se guarda en data/uploads)</small></span>
+      </label>
+      <p class="note">Datos de la tarea (carga, sexo, edad, estatura): se usan valores por defecto.</p>
+      <p class="error" id="add-error" role="alert" hidden></p>
+
+      <footer class="dialog-footer">
+        <button class="button" value="cancel" type="submit">Cancelar</button>
+        <button class="button primary" id="add-submit" type="button">Empezar análisis</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="summary-dialog" class="dialog small">
+    <form method="dialog" id="summary-form">
+      <header class="dialog-header">
+        <h2>Crear resumen</h2>
+        <button class="icon-button" value="cancel" type="submit" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </header>
+      <p class="muted">Un informe que agrupa todos los análisis del periodo, para la empresa y la Inspección de Trabajo.</p>
+      <div class="field-row">
+        <label class="field"><span>Desde</span><input id="summary-start" type="date"></label>
+        <label class="field"><span>Hasta</span><input id="summary-end" type="date"></label>
+      </div>
+      <p class="note" id="summary-count"></p>
+      <p class="error" id="summary-error" role="alert" hidden></p>
+      <footer class="dialog-footer">
+        <button class="button" value="cancel" type="submit">Cancelar</button>
+        <button class="button primary" id="summary-submit" type="button">Redactar resumen</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="dialog small">
+    <form method="dialog">
+      <h2 id="confirm-title">¿Borrar el informe?</h2>
+      <p id="confirm-text" class="muted"></p>
+      <footer class="dialog-footer">
+        <button class="button" value="cancel" type="submit">Cancelar</button>
+        <button class="button danger" value="ok" type="submit" id="confirm-ok">Borrar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/static/markdown.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
