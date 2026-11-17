@@ -129,7 +129,10 @@ class PoseEstimator:
         points = np.array([[p.x, p.y, p.z] for p in world], dtype=float)
         visibility = np.array([p.visibility or 0.0 for p in world],
                               dtype=float)
-        return Skeleton(frame.timestamp, points, visibility)
+        pixels = (np.array([[p.x, p.y] for p in found.pose_landmarks[0]],
+                           dtype=float)
+                  if found.pose_landmarks else None)
+        return Skeleton(frame.timestamp, points, visibility, pixels)
 
     def close(self) -> None:
         """Free the model."""

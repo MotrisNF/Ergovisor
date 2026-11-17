@@ -1,0 +1,250 @@
+"""The analysis drawn on the image: the skeleton coloured by its risk,
+the score and the main angles, and a warning while a moment of risk
+lasts.
+
+The same drawing goes to a video file (a recording, to check the
+analysis by eye) or to a window on the screen (a live camera).
+"""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import cv2
+import numpy as np
+from numpy.typing import NDArray
+from PIL import Image, ImageDraw, ImageFont
+
+from ..exceptions import RagError
+from .angles import Angles
+from .lifting import Lift
+from .reba import Reba
+from .skeleton import Point, Skeleton
+from .timeline import Event
+
+# The bones drawn: pairs of MediaPipe landmarks.
+BONES = [
+    (Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER),
+    (Point.LEFT_SHOULDER, Point.LEFT_ELBOW),
+    (Point.LEFT_ELBOW, Point.LEFT_WRIST),
+    (Point.RIGHT_SHOULDER, Point.RIGHT_ELBOW),
+    (Point.RIGHT_ELBOW, Point.RIGHT_WRIST),
+    (Point.LEFT_SHOULDER, Point.LEFT_HIP),
+    (Point.RIGHT_SHOULDER, Point.RIGHT_HIP),
+    (Point.LEFT_HIP, Point.RIGHT_HIP),
+    (Point.LEFT_HIP, Point.LEFT_KNEE),
+    (Point.LEFT_KNEE, Point.LEFT_ANKLE),
+    (Point.RIGHT_HIP, Point.RIGHT_KNEE),
+    (Point.RIGHT_KNEE, Point.RIGHT_ANKLE),
+    (Point.LEFT_ANKLE, Point.LEFT_FOOT),
+    (Point.RIGHT_ANKLE, Point.RIGHT_FOOT),
+    (Point.LEFT_EAR, Point.RIGHT_EAR),
+]
+# The colour of each action level (RGB): no risk to very high.
+COLOURS = {0: (46, 204, 113), 1: (46, 204, 113), 2: (241, 196, 15),
+           3: (230, 126, 34), 4: (231, 76, 60)}
+NO_SCORE = (180, 180, 180)
+FONT_FILES = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/usr/share/fonts/TTF/DejaVuSans.ttf",
+              "/Library/Fonts/Arial Unicode.ttf"]
+WINDOW = "Análisis de posturas (q para salir)"
+
+
+def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """A font with accents and the degree sign, or Pillow's own."""
+    for path in FONT_FILES:
+        if Path(path).is_file():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size)
+
+
+def _clock(second: float) -> str:
+    """``1:02.3``."""
+    return f"{int(second // 60)}:{second % 60:04.1f}"
+
+
+def _angle(value: float | None) -> str:
+    """``45°``, or a dash when not measured."""
+    return "–" if value is None else f"{value:.0f}°"
+
+
+class Overlay:
+    """Draws each analysed frame, and writes or shows it.
+
+    Attributes:
+        path: Video file to write, or ``None``.
+        show: Whether to show a window (a live camera).
+        fps: Frames a second of the written video: the analysed ones.
+    """
+
+    def __init__(self, path: Path | None = None, show: bool = False,
+                 fps: float = 10.0) -> None:
+        """Nothing is opened until the first frame.
+
+        Raises:
+            RagError: A window is asked for without a screen.
+        """
+        if show and sys.platform.startswith("linux") and not (
+                os.environ.get("DISPLAY") or os.environ.get(
+                    "WAYLAND_DISPLAY")):
+            raise RagError("There is no screen to show the window on: "
+                           "use --overlay to write a video instead.")
+        self.path = path
+        self.show = show
+        self.fps = fps
+        self._writer: cv2.VideoWriter | None = None
+        self._font = _font(22)
+        self._small = _font(18)
+
+    def draw(self, image: NDArray[np.uint8], second: float,
+             skeleton: Skeleton | None, angles: Angles | None,
+             reba: Reba | None, event: Event | None,
+             lift: Lift | None = None) -> NDArray[np.uint8]:
+        """The frame with the analysis on it (RGB)."""
+        picture = Image.fromarray(image)
+        pen = ImageDraw.Draw(picture, "RGBA")
+        colour = COLOURS[reba.level] if reba is not None else NO_SCORE
+        if skeleton is not None and skeleton.pixels is not None:
+            self._skeleton(pen, skeleton, picture.size, colour)
+        self._panel(pen, second, angles, reba, colour)
+        if lift is not None:
+            self._lift(pen, lift, picture.size)
+        if event is not None:
+            self._warning(pen, event, picture.size)
+        return np.asarray(picture, dtype=np.uint8)
+
+    def _lift(self, pen: ImageDraw.ImageDraw, lift: Lift,
+              size: tuple[int, int]) -> None:
+        """The last lift, top right: its limit and its index."""
+        width, _ = size
+        level = (0 if lift.index is None or lift.index <= 1
+                 else 3 if lift.index <= 3 else 4)
+        lines = [f"{lift.kind.capitalize()} de {lift.d:.0f} cm",
+                 f"Peso límite (NIOSH): {lift.limit:.1f} kg"]
+        if lift.index is not None:
+            lines.append(f"Índice: {lift.index:.2f} · {lift.risk.lower()}")
+        # As wide as its longest line.
+        longest = max(pen.textlength(line, font=self._font if n == 0
+                                     else self._small)
+                      for n, line in enumerate(lines))
+        left = int(width - 10 - longest - 34)
+        height = 14 + 30 * len(lines)
+        pen.rectangle([left, 10, width - 10, 10 + height],
+                      fill=(0, 0, 0, 160))
+        pen.rectangle([left, 10, left + 8, 10 + height],
+                      fill=COLOURS[level])
+        for number, line in enumerate(lines):
+            pen.text((left + 18, 18 + 30 * number), line,
+                     fill=(255, 255, 255),
+                     font=self._font if number == 0 else self._small)
+
+    def _skeleton(self, pen: ImageDraw.ImageDraw, skeleton: Skeleton,
+                  size: tuple[int, int], colour: tuple[int, int, int]
+                  ) -> None:
+        """The bones and joints seen, in the colour of the risk."""
+        assert skeleton.pixels is not None
+        width, height = size
+        thick = max(3, width // 250)
+
+        def at(point: Point) -> tuple[float, float]:
+            assert skeleton.pixels is not None
+            x, y = skeleton.pixels[point]
+            return float(x) * width, float(y) * height
+
+        for a, b in BONES:
+            if skeleton.seen(a, b):
+                pen.line([at(a), at(b)], fill=colour, width=thick)
+        for point in {p for bone in BONES for p in bone}:
+            if skeleton.seen(point):
+                x, y = at(point)
+                pen.ellipse([x - thick, y - thick, x + thick, y + thick],
+                            fill=(255, 255, 255))
+
+    def _panel(self, pen: ImageDraw.ImageDraw, second: float,
+               angles: Angles | None, reba: Reba | None,
+               colour: tuple[int, int, int]) -> None:
+        """The score and the main angles, top left."""
+        if reba is None:
+            lines = ["Sin persona detectada"]
+        else:
+            lines = [f"REBA {reba.score} · riesgo {reba.risk.lower()} "
+                     f"(nivel {reba.level})"]
+        if angles is not None:
+            left = angles.left.upper if angles.left else None
+            right = angles.right.upper if angles.right else None
+            lines += [f"Tronco {_angle(angles.trunk)}   Cuello "
+                      f"{_angle(angles.neck)}   Rodillas "
+                      f"{_angle(angles.knee)}",
+                      f"Brazo izq. {_angle(left)}   dcho. {_angle(right)}"]
+        lines.append(_clock(second))
+        height = 14 + 30 * len(lines)
+        pen.rectangle([10, 10, 470, 10 + height], fill=(0, 0, 0, 160))
+        pen.rectangle([10, 10, 18, 10 + height], fill=colour)
+        for number, line in enumerate(lines):
+            pen.text((28, 18 + 30 * number), line, fill=(255, 255, 255),
+                     font=self._font if number == 0 else self._small)
+
+    def _warning(self, pen: ImageDraw.ImageDraw, event: Event,
+                 size: tuple[int, int]) -> None:
+        """A band at the bottom while a moment of risk lasts."""
+        width, height = size
+        text = (f"Riesgo {event.risk.lower()} desde {_clock(event.start)}: "
+                + (", ".join(event.causes) or "postura"))
+        pen.rectangle([0, height - 50, width, height],
+                      fill=(*COLOURS[event.level], 220))
+        pen.text((16, height - 40), text[:110], fill=(0, 0, 0),
+                 font=self._small)
+
+    def write(self, image: NDArray[np.uint8]) -> bool:
+        """Write and/or show a drawn frame.
+
+        Returns:
+            False when the window was closed with ``q``: the analysis
+            should stop.
+        """
+        bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if self.path is not None:
+            if self._writer is None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                height, width = bgr.shape[:2]
+                self._writer = cv2.VideoWriter(
+                    str(self.path), cv2.VideoWriter.fourcc(*"mp4v"),
+                    self.fps, (width, height))
+            self._writer.write(bgr)
+        if self.show:
+            cv2.imshow(WINDOW, bgr)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                return False
+        return True
+
+    def close(self) -> None:
+        """Finish the video file and close the window.
+
+        OpenCV writes MPEG-4 part 2, which many players and browsers do
+        not open; with ffmpeg installed the file is turned into H.264,
+        which any of them plays.
+        """
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+            if self.path is not None:
+                _to_h264(self.path)
+        if self.show:
+            cv2.destroyAllWindows()
+
+
+def _to_h264(path: Path) -> None:
+    """Re-encode a video as H.264 in place, if ffmpeg is there."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return
+    converted = path.with_name(f"{path.stem}.h264{path.suffix}")
+    done = subprocess.run(
+        [ffmpeg, "-loglevel", "error", "-y", "-i", str(path), "-c:v",
+         "libx264", "-pix_fmt", "yuv420p", "-crf", "23", "-movflags",
+         "+faststart", str(converted)], check=False)
+    if done.returncode == 0:
+        converted.replace(path)
+    else:
+        converted.unlink(missing_ok=True)

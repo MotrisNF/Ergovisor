@@ -9,12 +9,22 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 
-from .angles import measure
+from .angles import Angles, measure
+from .lifting import Lift, Lifting, LiftingReport
 from .pose import PoseEstimator
-from .reba import Task
+from .reba import Reba, Task
+from .skeleton import Skeleton
 from .smoothing import Smoother
 from .sources import Frame
 from .timeline import Event, Summary, Timeline
+
+# Called with each analysed frame: the frame, its smoothed skeleton, its
+# angles, its score and the moment of risk going on. Returning False stops
+# the analysis (a window closed by the person).
+OnResult = Callable[[Frame, Skeleton | None, Angles | None, Reba | None,
+                     Event | None, Lift | None], bool | None]
+# A lift stays on the drawing this long after it ends.
+LIFT_SHOWN = 5.0
 
 METHOD = ("REBA (Rapid Entire Body Assessment), según la NTP 601 del INSST "
           "(Hignett y McAtamney)")
@@ -35,6 +45,8 @@ class Analysis(BaseModel):
         unmeasured: What the method asks that a skeleton cannot show:
             those points are never added, so the score may be lower than
             an evaluator's.
+        lifting: The lifts and lowerings scored with the NIOSH equation,
+            or ``None`` when not analysed.
     """
 
     source: str
@@ -44,6 +56,7 @@ class Analysis(BaseModel):
     summary: Summary
     events: list[Event]
     unmeasured: list[str] = UNMEASURED
+    lifting: LiftingReport | None = None
 
 
 def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
@@ -51,7 +64,10 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
             seconds: float = 0.0,
             on_event: Callable[[Event], None] | None = None,
             on_frame: Callable[[Frame], None] | None = None,
-            interruptible: bool = False) -> Analysis:
+            interruptible: bool = False,
+            on_result: OnResult | None = None,
+            lifting: Lifting | None = None,
+            on_lift: Callable[[Lift], None] | None = None) -> Analysis:
     """Analyse frames until they end, or for ``seconds`` (0: no limit).
 
     Args:
@@ -66,6 +82,11 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
         interruptible: Ctrl+C ends the reading and the analysis so far is
             kept, as a live camera is stopped; otherwise it stops
             everything.
+        on_result: Called with each analysed frame and what was found in
+            it (to draw it); returning False stops the analysis.
+        lifting: Finds and scores the lifts, with the load and the
+            person's data; ``None`` does not look for them.
+        on_lift: Called with each lift as soon as it ends.
 
     Returns:
         The summary and every moment of risk.
@@ -91,9 +112,23 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
                 smoother.reset()
                 angles = None
             else:
-                angles = measure(smoother.add(skeleton))
-            _, ended = timeline.add(frame.timestamp, angles)
+                skeleton = smoother.add(skeleton)
+                angles = measure(skeleton)
+            result, ended = timeline.add(frame.timestamp, angles)
             keep(ended)
+            if lifting is not None:
+                lift = lifting.add(skeleton)
+                if lift is not None and on_lift is not None:
+                    on_lift(lift)
+            recent = None
+            if lifting is not None and lifting.lifts and (
+                    frame.timestamp - lifting.lifts[-1].end.second
+                    <= LIFT_SHOWN):
+                recent = lifting.lifts[-1]
+            if on_result is not None and on_result(
+                    frame, skeleton, angles, result, timeline.current,
+                    recent) is False:
+                break
     except KeyboardInterrupt:
         if not interruptible:
             raise
@@ -103,7 +138,21 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
             timespec="seconds"),
         task={"load_kg": task.load_kg, "sudden": task.sudden,
               "coupling": task.coupling},
-        summary=timeline.summary, events=events)
+        summary=timeline.summary, events=events,
+        lifting=lifting.report() if lifting is not None else None)
+
+
+def describe_lift(lift: Lift) -> str:
+    """One line for a lift: when, how much, its limit and its index."""
+    def clock(second: float) -> str:
+        return f"{int(second // 60):02d}:{second % 60:04.1f}"
+
+    index = (f", IL {lift.index:.2f} ({lift.risk.lower()})"
+             if lift.index is not None else "")
+    notes = f". {'; '.join(lift.notes)}" if lift.notes else ""
+    return (f"[{clock(lift.start.second)}–{clock(lift.end.second)}] "
+            f"{lift.kind.capitalize()} de {lift.d:.0f} cm: LPR "
+            f"{lift.limit:.1f} kg{index}{notes}")
 
 
 def describe(event: Event) -> str:

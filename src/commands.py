@@ -886,6 +886,13 @@ class RagCLI:
             coupling: Annotated[int, Field(ge=0, le=3)] = 0,
             alert_level: Annotated[int, Field(ge=1, le=4)] = 2,
             seconds: Annotated[float, Field(ge=0)] = 0.0,
+            overlay: str = "",
+            show: bool = False,
+            sex: Literal["", "hombre", "mujer"] = "",
+            age: Annotated[int, Field(ge=0, le=100)] = 0,
+            task_duration: Literal["corta", "moderada", "larga"] = "larga",
+            lifts_per_minute: Annotated[float, Field(ge=0)] = 0.0,
+            height_cm: Annotated[float, Field(ge=0, le=250)] = 0.0,
             save_directory: Annotated[
                 str, Field(min_length=1)] = "data/output/posture"
             ) -> None:
@@ -913,9 +920,25 @@ class RagCLI:
                 risk (2 is "Medio": intervention needed).
             seconds: Stop after this time; 0 reads the whole video, or
                 the camera until Ctrl+C.
+            overlay: Write a video with the skeleton, the score and the
+                warnings drawn on it, to check the analysis by eye.
+            show: Show that drawing in a window as it goes (a live
+                camera); ``q`` closes it and ends the analysis.
+            sex: ``hombre`` or ``mujer``, for the INSST guide's heaviest
+                recommended load (empty: the lowest for 20-45 years).
+            age: Age in years, for that load (0: unknown).
+            task_duration: How long the lifting task lasts, for the NIOSH
+                equation: ``corta`` (1 h or less, with rest), ``moderada``
+                (1-2 h) or ``larga`` (more than 2 h).
+            lifts_per_minute: How often the task lifts; 0 counts the
+                lifts in the video.
+            height_cm: The person's real height, to scale the distances
+                the model measures (0: the model's own scale).
             save_directory: Folder where the analysis JSON is written.
         """
-        from .posture.analysis import analyse, describe
+        from .posture.analysis import analyse, describe, describe_lift
+        from .posture.lifting import Lifting, reference_kg
+        from .posture.overlay import Overlay
         from .posture.pose import PoseEstimator
         from .posture.reba import Task
         from .posture.sources import Camera, VideoFile
@@ -930,27 +953,62 @@ class RagCLI:
             frames, name = Camera(device, every), f"camera {camera}"
         task = Task(load_kg=load_kg, sudden=sudden,
                     coupling=cast(Literal[0, 1, 2, 3], coupling))
+        lifting = Lifting(
+            load_kg=load_kg or None,
+            grip=("bueno", "regular", "malo", "malo")[coupling],
+            duration=task_duration,
+            reference_kg=reference_kg(sex, age or None),
+            lifts_per_minute=lifts_per_minute, height_cm=height_cm or None)
+        # A recording is drawn at the rate its frames are analysed, so the
+        # drawn video plays at real speed.
+        rate = (frames.fps if isinstance(frames, VideoFile)
+                else 1 / every if every else 10.0)
+        drawing = (Overlay(Path(overlay) if overlay else None, show,
+                           fps=rate)
+                   if overlay or show else None)
         print(f"Loading the pose model ({model})...", file=sys.stderr)
         estimator = PoseEstimator(model)
         progress = tqdm(desc="Analysing", unit="frame", file=sys.stderr)
+
+        def draw(frame: Any, *found: Any) -> bool:
+            assert drawing is not None
+            return drawing.write(drawing.draw(frame.image, frame.timestamp,
+                                              *found))
+
         try:
             result = analyse(
                 frames, estimator, name, task, alert_level, seconds,
                 on_event=lambda event: tqdm.write(describe(event),
                                                   file=sys.stderr),
                 on_frame=lambda frame: progress.update(),
-                interruptible=bool(camera))
+                interruptible=bool(camera),
+                on_result=draw if drawing is not None else None,
+                lifting=lifting,
+                on_lift=lambda lift: tqdm.write(describe_lift(lift),
+                                                file=sys.stderr))
         finally:
             progress.close()
             estimator.close()
+            if drawing is not None:
+                drawing.close()
         summary = result.summary
         print(f"{summary.frames_with_person} of {summary.frames} frames "
               f"with a person, {summary.seconds:.1f} s; "
               f"{len(result.events)} moments of risk, highest REBA "
               f"{summary.max_score}", file=sys.stderr)
+        if result.lifting is not None:
+            report = result.lifting
+            index = (f", highest lifting index {report.max_index:.2f}"
+                     if report.max_index is not None else "")
+            print(f"{len(report.lifts)} lifts and lowerings, "
+                  f"{report.lifts_per_minute:.1f} a minute{index}",
+                  file=sys.stderr)
         stem = Path(video).stem if video else "camera"
         path = self._save_json(save_directory, f"{stem}.json", result)
         print(f"Analysis saved in '{path}'", file=sys.stderr)
+        if overlay:
+            print(f"Video with the analysis drawn saved in '{overlay}'",
+                  file=sys.stderr)
 
     @CliCommand.validated
     def serve(self,

@@ -245,6 +245,11 @@ class Timeline:
             return None
         return event
 
+    @property
+    def current(self) -> Event | None:
+        """The moment of risk going on now, not ended yet."""
+        return self._open
+
     def finish(self) -> Event | None:
         """The moment of risk still open at the end of the recording."""
         return self._take()

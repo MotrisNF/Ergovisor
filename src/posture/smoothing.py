@@ -35,8 +35,11 @@ class Smoother:
             self._recent.popleft()
         points = np.median([s.points for s in self._recent], axis=0)
         visibility = np.median([s.visibility for s in self._recent], axis=0)
+        drawn = [s.pixels for s in self._recent if s.pixels is not None]
+        pixels = (np.asarray(np.median(drawn, axis=0), dtype=float)
+                  if drawn else None)
         return Skeleton(skeleton.timestamp, np.asarray(points, dtype=float),
-                        np.asarray(visibility, dtype=float))
+                        np.asarray(visibility, dtype=float), pixels)
 
     def reset(self) -> None:
         """Forget the recent skeletons (the person was lost)."""

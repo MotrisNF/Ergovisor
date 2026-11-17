@@ -35,6 +35,8 @@ class Point(IntEnum):
     RIGHT_KNEE = 26
     LEFT_ANKLE = 27
     RIGHT_ANKLE = 28
+    LEFT_HEEL = 29
+    RIGHT_HEEL = 30
     LEFT_FOOT = 31
     RIGHT_FOOT = 32
 
@@ -48,11 +50,14 @@ class Skeleton:
         points: 33 x 3 coordinates in metres (see the module).
         visibility: 33 values from 0 to 1: how sure the model is that
             each point is seen.
+        pixels: 33 x 2 places in the image, from 0 to 1 (x to the right,
+            y down), to draw the skeleton on it; ``None`` when unknown.
     """
 
     timestamp: float
     points: NDArray[np.float64]
     visibility: NDArray[np.float64]
+    pixels: NDArray[np.float64] | None = None
 
     def at(self, point: Point) -> NDArray[np.float64]:
         """The coordinates of a point."""

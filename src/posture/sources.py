@@ -37,6 +37,10 @@ class VideoFile:
         path: The video file.
         every: Seconds between two analysed frames; frames in between are
             skipped. 0 keeps them all.
+        step: One frame of every ``step`` is analysed: ``every`` times the
+            frames a second of the video, rounded, so the frames kept are
+            evenly spaced.
+        fps: Frames a second analysed: the video's divided by ``step``.
     """
 
     def __init__(self, path: str | Path, every: float = 0.0) -> None:
@@ -51,25 +55,33 @@ class VideoFile:
             raise RagError(f"Video not found: {self.path}")
         capture = cv2.VideoCapture(str(self.path))
         opened = capture.isOpened()
+        native = capture.get(cv2.CAP_PROP_FPS) if opened else 0.0
         capture.release()
         if not opened:
             raise RagError(f"Cannot open the video: {self.path}")
+        native = native if native > 0 else 30.0
+        self.step = max(1, round(every * native))
+        self.fps = native / self.step
 
     def __iter__(self) -> Iterator[Frame]:
         """The frames, in order, as fast as they can be read."""
         capture = cv2.VideoCapture(str(self.path))
-        last = -float("inf")
+        number = 0
         try:
             while True:
-                read, image = capture.read()
+                # The skipped frames are only decoded far enough to move
+                # on (grab), which is faster than reading them.
+                if not capture.grab():
+                    return
+                number += 1
+                if (number - 1) % self.step:
+                    continue
+                read, image = capture.retrieve()
                 if not read:
                     return
                 # The time of the frame inside the video, not the time it
                 # took to read it.
                 second = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000
-                if second - last < self.every:
-                    continue
-                last = second
                 yield Frame(second, _rgb(image))
         finally:
             capture.release()
