@@ -30,8 +30,11 @@ from .timeline import Event
 CANDIDATES = 10
 # A passage that scores less than this share of the best one is left
 # out: on this corpus that drops the third document when only one or two
-# speak of the topic.
-RELATIVE = 0.3
+# speak of the topic. At 0.3 four topics still got a passage on something
+# else (0.31-0.37 of the best: the neck got the load held away from the
+# trunk, the push got REBA's table A...); the passages on the topic
+# score 0.40 or more (2026-11-18).
+RELATIVE = 0.4
 # Characters of each passage shown in the report.
 EXCERPT = 300
 # A Markdown heading line, as the corpus writes them.
@@ -86,7 +89,10 @@ TOPICS: dict[str, Topic] = {
     "distance": Topic(
         "Carga separada del cuerpo",
         "carga manipulada a distancia del tronco con torsión o "
-        "inclinación distancia horizontal alejada del cuerpo"),
+        "inclinación distancia horizontal alejada del cuerpo",
+        # REBA does not speak of it: its passage on how the method was
+        # made scored 0.86 of the best.
+        SCREENS + ("ntp_601",)),
     "height": Topic(
         "Altura de las manos fuera de la zona recomendada",
         "altura de los hombros y de los nudillos altura segura "
@@ -136,7 +142,9 @@ TOPICS: dict[str, Topic] = {
     "screen_breaks": Topic(
         "Pausas en el trabajo con pantallas",
         "pausas cambios de actividad trabajo continuado con pantalla "
-        "pequeñas pausas cada 30 minutos cambios de postura", LOADS),
+        "pequeñas pausas cada 30 minutos cambios de postura",
+        # REBA's "cambios posturales" is not about breaks.
+        LOADS + ("ntp_601",)),
     "screen_employer": Topic(
         "Obligaciones del empresario en el trabajo con pantallas",
         "obligaciones generales del empresario equipos que incluyen "
