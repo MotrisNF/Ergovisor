@@ -41,6 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .exceptions import RagError
+from .posture.analysis import people_of
 from .posture.devices import Device, list_cameras
 from .posture.docx_export import to_docx
 from .posture.sessions import (Model, SessionConfig, SessionManager,
@@ -52,6 +53,9 @@ from .reader import CorpusReader
 
 WEB = Path(__file__).parent / "web"
 REGULATION = "_regulation"
+# A session analysed for less than this (s) is a test of the camera: no
+# detailed report is written by itself.
+AUTO_MIN_SECONDS = 60.0
 BOUNDARY = "frame"
 # Characters kept in an uploaded file's name.
 SAFE_NAME = re.compile(r"[^\w.-]+")
@@ -71,7 +75,7 @@ class NewSource(BaseModel):
 
     kind: Literal["camera", "address"]
     source: str = Field(min_length=1)
-    model: Model = "lite"
+    model: Model = "full"
     record: bool = False
 
 
@@ -105,12 +109,15 @@ class ReportSummary(BaseModel):
         name: Its file name without ``.json``.
         source: The video or camera analysed.
         created: When it was saved (UTC, ISO).
-        seconds: Time analysed.
-        max_score: Highest REBA score.
+        seconds: Time analysed (of the person seen longest).
+        max_score: Highest REBA score, of anybody.
         max_level: Highest REBA action level.
-        events: Moments of risk.
-        lifts: Lifts and lowerings.
+        events: Moments of risk, of everybody.
+        lifts: Lifts and lowerings, of everybody.
         max_index: Highest lifting index, if any.
+        beyond_limits: Lifts with a limit of 0 kg (no index, not
+            acceptable with any load).
+        people: People analysed.
         topics: Kinds of risk with regulation; ``None`` without it.
         screen_warnings: Warnings of the screen work; ``None`` when the
             camera never had the screen's view.
@@ -127,6 +134,8 @@ class ReportSummary(BaseModel):
     max_index: float | None
     topics: int | None
     screen_warnings: int | None = None
+    beyond_limits: int = 0
+    people: int = 1
 
 
 class WebApp:
@@ -141,7 +150,7 @@ class WebApp:
                  save_directory: str = "data/output/posture",
                  upload_directory: str = "data/uploads",
                  regulation_dir: str = "data/processed/prl",
-                 model: Model = "lite", llm: Llm | None = None,
+                 model: Model = "full", llm: Llm | None = None,
                  llm_model: str = "", record: bool = False) -> None:
         """Set up the routes; nothing is analysed or written yet.
 
@@ -335,9 +344,14 @@ class WebApp:
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                summary = data["summary"]
-                lifting = data.get("lifting") or {}
-                office = data.get("office")
+                people = people_of(data)
+                if not people and "people" not in data:
+                    continue
+                summaries = [p["summary"] for p in people]
+                liftings = [p.get("lifting") or {} for p in people]
+                offices = [p["office"] for p in people if p.get("office")]
+                indices = [lifting["max_index"] for lifting in liftings
+                           if lifting.get("max_index") is not None]
                 regulation = path.with_name(f"{path.stem}{REGULATION}.json")
                 topics = None
                 if regulation.is_file():
@@ -346,15 +360,24 @@ class WebApp:
                 found.append(ReportSummary(
                     name=path.stem, source=data.get("source", ""),
                     created=data.get("created", ""),
-                    seconds=max(summary.get("seconds", 0.0),
-                                (office or {}).get("seconds_at_screen", 0.0)),
-                    max_score=summary.get("max_score", 0),
-                    max_level=summary.get("max_level", 0),
-                    events=len(data.get("events", [])),
-                    lifts=len(lifting.get("lifts", [])),
-                    max_index=lifting.get("max_index"), topics=topics,
-                    screen_warnings=(len(office.get("events", []))
-                                     if office else None)))
+                    seconds=max([s.get("seconds", 0.0) for s in summaries]
+                                + [o.get("seconds_at_screen", 0.0)
+                                   for o in offices] + [0.0]),
+                    max_score=max([s.get("max_score", 0) for s in summaries]
+                                  + [0]),
+                    max_level=max([s.get("max_level", 0) for s in summaries]
+                                  + [0]),
+                    events=sum(len(p.get("events", [])) for p in people),
+                    lifts=sum(len(lifting.get("lifts", []))
+                              for lifting in liftings),
+                    max_index=max(indices) if indices else None,
+                    beyond_limits=sum(lifting.get("beyond_limits", 0)
+                                      for lifting in liftings),
+                    topics=topics,
+                    screen_warnings=(sum(len(o.get("events", []))
+                                         for o in offices)
+                                     if offices else None),
+                    people=len(people)))
             except (OSError, ValueError, KeyError, TypeError):
                 continue
         return sorted(found, key=lambda r: r.created, reverse=True)
@@ -365,9 +388,12 @@ class WebApp:
         regulation = path.with_name(f"{name}{REGULATION}.json")
         try:
             written = load(self._written / f"{name}.json")
+            analysis = json.loads(path.read_text(encoding="utf-8"))
+            # Saved before there were several people: its only person.
+            analysis["people"] = people_of(analysis)
             return {
                 "name": name,
-                "analysis": json.loads(path.read_text(encoding="utf-8")),
+                "analysis": analysis,
                 "regulation": (json.loads(regulation.read_text(
                     encoding="utf-8")) if regulation.is_file() else None),
                 "written": written.model_dump() if written else None,
@@ -412,14 +438,34 @@ class WebApp:
     def _queue_writing(self, name: str, config: SessionConfig) -> None:
         """An analysis was saved: write its detailed report soon.
 
-        Not for a recorded session (calibration videos): those never
-        spend a call to the model by themselves; the report can still be
-        asked for with its button.
+        Not, by itself, for a recorded session (calibration videos), one
+        shorter than ``AUTO_MIN_SECONDS`` (a test of the camera) or one
+        that found nothing to report: those never spend a call to the
+        model; the report can still be asked for with its button.
         """
-        if config.record:
+        if config.record or not self._worth_writing(name):
             return
         self._states[name] = "writing"
         self._pending.put(name)
+
+    def _worth_writing(self, name: str) -> bool:
+        """Whether an analysis is long enough and found something."""
+        try:
+            data = json.loads((self._reports / f"{name}.json").read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        for person in people_of(data):
+            office = person.get("office") or {}
+            seconds = max(person.get("summary", {}).get("seconds", 0.0),
+                          office.get("seconds_at_screen", 0.0))
+            found = (person.get("events")
+                     or (person.get("lifting") or {}).get("lifts")
+                     or (person.get("pushing") or {}).get("pushes")
+                     or office.get("events"))
+            if seconds >= AUTO_MIN_SECONDS and found:
+                return True
+        return False
 
     def _write_pending(self) -> None:
         """Write the detailed reports of the saved analyses, one by one

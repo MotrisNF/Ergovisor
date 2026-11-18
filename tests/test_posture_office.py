@@ -95,6 +95,20 @@ class TestWarnings:
         assert [e.kind for e in found] == ["neck_flexed"]
         assert "30°" in found[0].detail
 
+    def test_looking_down_is_not_a_rest(self) -> None:
+        """A paper on the desk (turned 28°, down 25°) keeps the eyes near:
+        no visual rest; turning to the window (34°, level) is one."""
+        office = Office()
+        run(office, 10)
+        run(office, 30, start=10, yaw=28.0, pitch=25.0)
+        report = office.report()
+        assert report is not None and report.visual_rests == 0
+        office = Office()
+        run(office, 10)
+        run(office, 30, start=10, yaw=34.0, pitch=3.0)
+        report = office.report()
+        assert report is not None and report.visual_rests == 1
+
     def test_neck_flexed_short(self) -> None:
         office = Office()
         assert run(office, 40, pitch=30.0) + run(office, 2, start=40) == []
@@ -133,13 +147,15 @@ class TestWarnings:
         report = office.report()
         assert report is not None and report.breaks == 1
 
-    def test_shoulders_raised(self) -> None:
+    def test_shoulders_not_warned(self) -> None:
+        """Raised shoulders are not measured (unreliable from the front
+        camera): ears close to the shoulders give no warning."""
         office = Office()
         run(office, 120, step=1.0)
         found = run(office, 70, step=1.0, start=120,
                     body=skeleton(ears_above=0.05))
         found += run(office, 2, start=190)
-        assert "shoulders_raised" in [e.kind for e in found]
+        assert found == []
 
 
 class TestReport:
@@ -280,23 +296,24 @@ class TestAnalysisSwitchesView:
             return "body" if 100 <= second < 160 else "desk"
 
         class Poses:
-            def find(self, frame: Frame) -> Skeleton:
+            def find_all(self, frame: Frame) -> list[Skeleton]:
                 seen = (skeleton(hips=True, shoulder_width=0.1)
                         if view(frame.timestamp) == "body"
                         else skeleton(hips=False))
-                return replace(seen, timestamp=frame.timestamp)
+                return [replace(seen, timestamp=frame.timestamp)]
 
         class Faces:
-            def find(self, frame: Frame) -> Face:
-                return face(frame.timestamp)
+            def find_all(self, frame: Frame) -> list[Face]:
+                return [face(frame.timestamp)]
 
         frames = [Frame(float(s), np.zeros((4, 4, 3), dtype=np.uint8))
                   for s in range(200)]
         result = analyse(frames, Poses(), "test",  # type: ignore[arg-type]
                          office=Office(),
                          faces=Faces())  # type: ignore[arg-type]
-        assert result.office is not None
-        assert result.office.breaks == 1
+        [person] = result.people
+        assert person.office is not None
+        assert person.office.breaks == 1
         # Seated 100 + 40 s (the view needs a moment to switch back).
-        assert result.office.seconds_at_screen == pytest.approx(140, abs=4)
-        assert result.summary.frames_with_person > 0
+        assert person.office.seconds_at_screen == pytest.approx(140, abs=4)
+        assert person.summary.frames_with_person > 0

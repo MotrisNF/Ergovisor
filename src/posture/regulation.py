@@ -18,9 +18,10 @@ from pydantic import BaseModel
 
 from ..base_retriever import Retriever
 from ..tokenizer_bm import Tokenizer
-from .analysis import Analysis
+from .analysis import Analysis, PersonAnalysis
 from .lifting import Lift
 from .office import OfficeEvent
+from .pushing import Push
 from .timeline import Event
 
 # The search returns this many chunks, of which the best one of each file
@@ -106,6 +107,20 @@ TOPICS: dict[str, Topic] = {
         "Obligaciones del empresario en la manipulación de cargas",
         "obligaciones generales del empresario manipulación manual de "
         "cargas evaluación medidas"),
+    "push_pull": Topic(
+        "Empuje y tracción de cargas",
+        "en caso de que la tarea implique un empuje y tracción de cargas "
+        "se recomiendan los siguientes métodos de evaluación tablas de "
+        "Snook y Ciriello fuerza inicial fuerza mantenida"),
+    "push_height": Topic(
+        "Altura de las manos al empujar o tirar",
+        "se empuja o tracciona una carga con las manos por debajo de la "
+        "altura de los nudillos o por encima del nivel de los hombros "
+        "punto de aplicación de las fuerzas"),
+    "push_force": Topic(
+        "Fuerza de empuje y tracción",
+        "empuje o tracción fuerza aplicada fuerza inicial y mantenida de "
+        "referencia máximos que no se deben sobrepasar ISO/TR 12295"),
     "screen_distance": Topic(
         "Distancia de visión a la pantalla",
         "distancia de visualización pantalla colocación de la pantalla "
@@ -114,10 +129,6 @@ TOPICS: dict[str, Topic] = {
         "Postura del cuello y altura de la pantalla",
         "altura de la pantalla parte superior altura de los ojos línea de "
         "visión horizontal 40° bajo la horizontal cuello", LOADS),
-    "screen_shoulders": Topic(
-        "Postura de los hombros ante la pantalla",
-        "postura de trabajo inadecuada dolor en el cuello la espalda o las "
-        "extremidades superiores hombros problemas físicos", LOADS),
     "visual_rest": Topic(
         "Descansos visuales y fatiga visual",
         "fatiga visual regla 20-20-20 mirar lejos de la pantalla parpadear "
@@ -137,7 +148,6 @@ OFFICE_TOPICS: dict[str, str] = {
     "neck_flexed": "screen_neck",
     "neck_extended": "screen_neck",
     "neck_turned": "screen_neck",
-    "shoulders_raised": "screen_shoulders",
     "no_visual_rest": "visual_rest",
     "no_break": "screen_breaks",
 }
@@ -250,7 +260,8 @@ def event_warnings(event: Event) -> list[Warning]:
 
 
 def lift_warnings(lift: Lift) -> list[Warning]:
-    """A lift: its index when above 1, and its notes.
+    """A lift: its index when above 1 (or its limit of 0 kg), and its
+    notes.
 
     Returns:
         ``(topic, "[start–end] warning")`` pairs.
@@ -260,8 +271,31 @@ def lift_warnings(lift: Lift) -> list[Warning]:
     if lift.index is not None and lift.index > 1:
         found.append(("lifting_index", f"{when} {lift.kind}: índice "
                       f"{lift.index:.2f} ({lift.risk.lower()})"))
+    notes = lift.notes
+    if lift.beyond_limits and notes:
+        # Its first note says why the limit is 0 kg.
+        found.append(("lifting_index", f"{when} {lift.kind}: {notes[0]} "
+                      f"({lift.risk.lower()})"))
+        notes = notes[1:]
     return found + [(topic_of(note), f"{when} {lift.kind}: {note}")
-                    for note in lift.notes]
+                    for note in notes]
+
+
+def push_warnings(push: Push) -> list[Warning]:
+    """A push or a pull: what it was, and its warnings.
+
+    Returns:
+        ``(topic, "[start–end] warning")`` pairs.
+    """
+    when = f"[{_clock(push.start)}–{_clock(push.end)}]"
+    found: list[Warning] = [("push_pull", f"{when} {push.kind} de "
+                             f"{push.metres:.1f} m")]
+    for note in push.notes:
+        topic = ("push_height" if note.startswith("manos")
+                 else "trunk_twist" if note.startswith("tronco girado")
+                 else "trunk_flexion")
+        found.append((topic, f"{when} {push.kind}: {note}"))
+    return found
 
 
 def office_warnings(event: OfficeEvent) -> list[Warning]:
@@ -286,8 +320,22 @@ def warnings(analysis: Analysis) -> list[Warning]:
         its REBA level and its causes; a lift adds its notes, and its
         index when above 1; a task with lifts adds the duties of the
         employer and its notes (the frequency); screen work adds its
-        warnings and the duties of the employer for screens.
+        warnings and the duties of the employer for screens. With
+        several people, each warning starts with whose it is.
     """
+    found: list[tuple[float, str | None, str]] = []
+    several = len(analysis.people) > 1
+    for person in analysis.people:
+        found += [(second, topic, f"Persona {person.person}: {text}"
+                   if several else text)
+                  for second, topic, text in _person_warnings(person)]
+    found.sort(key=lambda item: item[0])
+    return [(topic, text) for _, topic, text in found]
+
+
+def _person_warnings(analysis: PersonAnalysis
+                     ) -> list[tuple[float, str | None, str]]:
+    """The warnings of one person, with when they start."""
     found: list[tuple[float, str | None, str]] = []
     for event in analysis.events:
         found += [(event.start, topic, text)
@@ -302,6 +350,16 @@ def warnings(analysis: Analysis) -> list[Warning]:
         found.append((first, "employer",
                       f"{len(report.lifts)} levantamientos o descensos "
                       "de cargas"))
+    pushing = analysis.pushing
+    if pushing is not None and pushing.pushes:
+        for push in pushing.pushes:
+            found += [(push.start, topic, text)
+                      for topic, text in push_warnings(push)]
+        first = pushing.pushes[0].start
+        found += [(first, "push_force", note) for note in pushing.notes]
+        found.append((first, "push_force",
+                      f"{len(pushing.pushes)} empujes o arrastres "
+                      "(límites de fuerza de la guía)"))
     office = analysis.office
     if office is not None:
         for warning in office.events:
@@ -311,8 +369,7 @@ def warnings(analysis: Analysis) -> list[Warning]:
             found.append((office.events[0].start, "screen_employer",
                           f"{office.seconds_at_screen / 60:.0f} min de "
                           "trabajo frente a la pantalla"))
-    found.sort(key=lambda item: item[0])
-    return [(topic, text) for _, topic, text in found]
+    return found
 
 
 def _best_line(text: str, query: str) -> tuple[int, str]:
@@ -489,6 +546,12 @@ class LiveRegulation:
         brings the duties of the employer for screens."""
         return self._new(office_warnings(event) + [
             ("screen_employer", "trabajo frente a la pantalla")])
+
+    def push(self, push: Push) -> list[Finding]:
+        """The new findings of a push or pull that just ended; the first
+        one also brings the guide's force limits."""
+        return self._new(push_warnings(push) + [
+            ("push_force", "límites de fuerza de la guía")])
 
     def lift(self, lift: Lift) -> list[Finding]:
         """The new findings of a lift that just ended; the first one also

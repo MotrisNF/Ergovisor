@@ -16,7 +16,10 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel
 
 from .angles import Angles
-from .reba import SIDE_BEND, TWIST, Reba, Task, score
+from .reba import SIDE_BEND, TWIST, UPRIGHT, Reba, Task, score
+
+# REBA (NTP 601): the neck scores more flexed over 20°.
+NECK_FLEXED = 20.0
 
 # NTP 601: held more than a minute; repeated more than 4 times a minute.
 HOLD_SECONDS = 60.0
@@ -266,8 +269,14 @@ def causes(result: Reba, angles: Angles) -> list[str]:
     if angles.trunk_twist > TWIST or angles.trunk_side > SIDE_BEND:
         found.append("tronco girado o inclinado de lado")
     if result.neck >= 2:
-        found.append(f"cuello flexionado {angles.neck:.0f}°"
-                     if angles.neck > 0 else "cuello en extensión")
+        # Scored for its flexion or extension, or only for being turned
+        # or bent sideways (then a few degrees of flexion are no cause).
+        if angles.neck > NECK_FLEXED:
+            found.append(f"cuello flexionado {angles.neck:.0f}°")
+        elif angles.neck < -UPRIGHT:
+            found.append("cuello en extensión")
+        else:
+            found.append("cuello girado o inclinado de lado")
     if result.legs >= 3:
         found.append(f"rodillas flexionadas {angles.knee:.0f}°")
     if angles.one_leg:

@@ -76,6 +76,19 @@ class TestSessionManager:
         assert done.report == "report_0"
         assert done.camera == 0
 
+    def test_lift_scored_again_replaces(self) -> None:
+        """A lift sent again (its way up went on after a pause) replaces
+        the first one; another person's with the same start does not."""
+        first = {"person": 1, "kind": "levantamiento", "d": 30,
+                 "start": {"second": 4.0}}
+        again = {**first, "d": 60}
+        other = {**first, "person": 2}
+        sessions = manager([("lift", first), ("lift", other),
+                            ("lift", again)])
+        view = sessions.start(config())
+        wait_for(lambda: sessions.view(view.id).status == "done")
+        assert sessions.view(view.id).lifts == [again, other]
+
     def test_error_kept(self) -> None:
         sessions = manager([("error", "Cannot open the camera 0")])
         view = sessions.start(config())
@@ -214,6 +227,36 @@ class TestApi:
         assert [r["name"] for r in got] == ["new", "old"]
         assert got[1]["topics"] == 2 and got[0]["topics"] is None
         assert got[1]["max_index"] == 1.4 and got[1]["events"] == 1
+        assert got[1]["people"] == 1
+
+    def test_reports_of_several_people(self, client: TestClient,
+                                       tmp_path: Path) -> None:
+        """The history adds up everybody: the worst score and index, the
+        moments and lifts of all, the time of the one seen longest."""
+        people = [
+            {"person": 1, "summary": {"seconds": 30.0, "max_score": 5,
+                                      "max_level": 2},
+             "events": [EVENT], "lifting": {"lifts": [{}], "max_index": 0.8}},
+            {"person": 2, "summary": {"seconds": 12.0, "max_score": 9,
+                                      "max_level": 3},
+             "events": [EVENT, EVENT],
+             "lifting": {"lifts": [{}, {}], "max_index": 1.6}}]
+        (tmp_path / "reports" / "two.json").write_text(json.dumps(
+            {"source": "camera two", "created": "2026-11-18",
+             "people": people}))
+        [got] = client.get("/api/reports").json()
+        assert got["people"] == 2 and got["seconds"] == 30.0
+        assert (got["max_score"], got["max_level"]) == (9, 3)
+        assert (got["events"], got["lifts"]) == (3, 3)
+        assert got["max_index"] == 1.6
+
+    def test_old_report_has_its_person(self, client: TestClient,
+                                       tmp_path: Path) -> None:
+        """A report saved before there were several people is served
+        with its only person."""
+        write_report(tmp_path / "reports", "a", "2026-11-17T10:00:00+00:00")
+        [person] = client.get("/api/reports/a").json()["analysis"]["people"]
+        assert person["person"] == 1 and person["events"] == [EVENT]
 
     def test_report_and_delete(self, client: TestClient,
                                tmp_path: Path) -> None:
@@ -240,7 +283,7 @@ class TestApi:
                           json={"kind": "camera", "source": "0"})
         assert got.status_code == 200
         assert got.json()["label"] == "Webcam (0)"
-        assert got.json()["model"] == "lite"
+        assert got.json()["model"] == "full"
 
     def test_add_address_hides_password(self, client: TestClient) -> None:
         got = client.post("/api/sessions", json={

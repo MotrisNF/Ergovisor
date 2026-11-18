@@ -56,7 +56,7 @@ class SessionConfig(BaseModel):
     kind: Kind
     source: str
     label: str
-    model: Model = "lite"
+    model: Model = "full"
     every: float = 0.1
     regulation_dir: str = "data/processed/prl"
     k: int = 3
@@ -79,13 +79,15 @@ def report_name(config: SessionConfig, started: datetime) -> str:
     return stem
 
 
-def office_snapshot(state: Any) -> dict[str, Any] | None:
-    """What the interface shows of the screen work now; ``None`` when the
-    camera sees the whole body."""
+def office_snapshot(state: Any, person: int = 1
+                    ) -> dict[str, Any] | None:
+    """What the interface shows of the screen work now (of ``person``);
+    ``None`` when the camera sees the whole body."""
     if state is None:
         return None
     face = state.face
     return {
+        "person": person,
         "distance_cm": (round(face.distance_cm, 1)
                         if face is not None and face.distance_cm is not None
                         else None),
@@ -105,10 +107,13 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
     """Analyse one source until it ends or ``stop`` is set (a process).
 
     Sends ``(kind, data)`` messages: ``status`` (``loading``,
-    ``running``, ``saving``), ``event``, ``lift``, ``finding``,
-    ``warning``, ``progress``, and finally ``done`` (with the report's
-    name) or ``error``. Pictures go to ``pictures`` as
-    ``(jpeg bytes, second)``, dropped when the interface is behind.
+    ``running``, ``saving``), ``event``, ``lift``, ``push``,
+    ``office_event`` (each with the ``person`` it is of), ``finding``,
+    ``warning``, ``progress``, ``office`` and ``people`` (the screen work
+    and the people in the picture now, every second), and finally
+    ``done`` (with the report's name) or ``error``. Pictures go to
+    ``pictures`` as ``(jpeg bytes, second)``, dropped when the interface
+    is behind.
     """
     import cv2
 
@@ -118,6 +123,8 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
     from .overlay import Overlay
     from .face import FaceEstimator
     from .office import Office
+    from .people import MAX_PEOPLE
+    from .pushing import Pushing
     from .pose import PoseEstimator
     from .regulation import LiveRegulation, find_regulation
     from .reba import Task
@@ -151,26 +158,30 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
         if config.regulation_dir:
             live = LiveRegulation(
                 BM25Index.load(Path(config.regulation_dir)), config.k)
-        estimator = PoseEstimator(config.model)
-        faces = FaceEstimator()
+        estimator = PoseEstimator(config.model, people=MAX_PEOPLE)
+        faces = FaceEstimator(people=MAX_PEOPLE)
         office = Office()
         told = [0.0]
         overlay = Overlay()
         lifting = Lifting()
         last = [0.0]
 
-        def on_result(frame: Any, *found: Any) -> bool:
+        def on_result(frame: Any, people: Any) -> bool:
             if stop.is_set():
                 return False
-            state = found[-1]
             if time.monotonic() - told[0] >= 1:
                 told[0] = time.monotonic()
-                send("office", office_snapshot(state))
+                desk = next((p for p in people if p.office is not None),
+                            None)
+                send("office", office_snapshot(desk.office, desk.person)
+                     if desk is not None else None)
+                send("people", len(people))
             now = time.monotonic()
             if now - last[0] < 1 / PICTURES_PER_SECOND:
                 return True
             last[0] = now
-            image: Any = overlay.draw(frame.image, frame.timestamp, *found)
+            image: Any = overlay.draw(frame.image, frame.timestamp,
+                                      people)
             height, width = image.shape[:2]
             if width > PICTURE_WIDTH:
                 image = cv2.resize(image, (PICTURE_WIDTH,
@@ -187,22 +198,28 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 send("progress", min(1.0, frame.timestamp / duration))
             return True
 
-        def on_event(event: Any) -> None:
-            send("event", event.model_dump())
+        def on_event(person: int, event: Any) -> None:
+            send("event", {**event.model_dump(), "person": person})
             if live is not None:
                 for finding in live.event(event):
                     send("finding", finding.model_dump())
 
-        def on_office(warning: Any) -> None:
-            send("office_event", warning.model_dump())
+        def on_office(person: int, warning: Any) -> None:
+            send("office_event", {**warning.model_dump(), "person": person})
             if live is not None:
                 for finding in live.office(warning):
                     send("finding", finding.model_dump())
 
-        def on_lift(lift: Any) -> None:
-            send("lift", lift.model_dump())
+        def on_lift(person: int, lift: Any) -> None:
+            send("lift", {**lift.model_dump(), "person": person})
             if live is not None:
                 for finding in live.lift(lift):
+                    send("finding", finding.model_dump())
+
+        def on_push(person: int, push: Any) -> None:
+            send("push", {**push.model_dump(), "person": person})
+            if live is not None:
+                for finding in live.push(push):
                     send("finding", finding.model_dump())
 
         send("status", "running")
@@ -210,7 +227,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                          seconds=0.0, on_event=on_event,
                          interruptible=True, on_result=on_result,
                          lifting=lifting, on_lift=on_lift, office=office,
-                         faces=faces, on_office=on_office)
+                         faces=faces, on_office=on_office,
+                         pushing=Pushing(), on_push=on_push,
+                         max_people=MAX_PEOPLE)
         send("status", "saving")
         name = report_name(config, started)
         folder = Path(config.save_directory)
@@ -226,7 +245,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
         if config.record and Path(config.record).is_file():
             from .overlay import _to_h264
             # Playable in any player and browser.
-            _to_h264(Path(config.record))
+            # Recordings can last half an hour: the fastest encoding, so
+            # the session does not take minutes to save.
+            _to_h264(Path(config.record), preset="ultrafast")
         send("done", name)
     except (RagError, OSError, ValueError) as error:
         send("error", str(error))
@@ -258,10 +279,12 @@ class SessionView(BaseModel):
         second: Time of the newest picture.
         events: The moments of risk so far.
         lifts: The lifts so far.
+        pushes: The pushes and pulls so far.
         findings: The regulation found so far.
         office: The screen work now, or ``None`` when the camera sees the
             whole body.
         office_events: The warnings of the screen work so far.
+        people: The people in the picture now.
         warnings: Cuts and reconnections of the camera.
         report: The report's name once saved.
         error: What went wrong.
@@ -279,9 +302,11 @@ class SessionView(BaseModel):
     second: float
     events: list[dict[str, Any]]
     lifts: list[dict[str, Any]]
+    pushes: list[dict[str, Any]]
     findings: list[dict[str, Any]]
     office: dict[str, Any] | None
     office_events: list[dict[str, Any]]
+    people: int = 0
     warnings: list[str]
     report: str | None
     error: str | None
@@ -303,9 +328,11 @@ class _Session:
     second: float = 0.0
     events: list[dict[str, Any]] = field(default_factory=list)
     lifts: list[dict[str, Any]] = field(default_factory=list)
+    pushes: list[dict[str, Any]] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
     office: dict[str, Any] | None = None
     office_events: list[dict[str, Any]] = field(default_factory=list)
+    people: int = 0
     warnings: list[str] = field(default_factory=list)
     report: str | None = None
     error: str | None = None
@@ -320,9 +347,11 @@ class _Session:
             recording=self.config.record or None,
             model=self.config.model, started=self.started,
             status=self.status, progress=self.progress, second=self.second,
-            events=self.events, lifts=self.lifts, findings=self.findings,
+            events=self.events, lifts=self.lifts, pushes=self.pushes,
+            findings=self.findings,
             office=self.office, office_events=self.office_events,
-            warnings=self.warnings, report=self.report, error=self.error)
+            people=self.people, warnings=self.warnings, report=self.report,
+            error=self.error)
 
     @property
     def active(self) -> bool:
@@ -459,13 +488,27 @@ class SessionManager:
             elif kind == "event":
                 session.events.append(data)
             elif kind == "lift":
-                session.lifts.append(data)
+                # A lift scored again (its way up went on after a pause)
+                # replaces the first one: same person, kind and start.
+                same = [n for n, lift in enumerate(session.lifts)
+                        if (lift.get("person"), lift.get("kind"),
+                            lift.get("start", {}).get("second"))
+                        == (data.get("person"), data.get("kind"),
+                            data.get("start", {}).get("second"))]
+                if same:
+                    session.lifts[same[-1]] = data
+                else:
+                    session.lifts.append(data)
+            elif kind == "push":
+                session.pushes.append(data)
             elif kind == "finding":
                 session.findings.append(data)
             elif kind == "office":
                 session.office = data
             elif kind == "office_event":
                 session.office_events.append(data)
+            elif kind == "people":
+                session.people = data
             elif kind == "warning":
                 session.warnings.append(data)
             elif kind == "done":

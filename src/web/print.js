@@ -21,12 +21,14 @@ function sourceName(source) {
   return /^[a-z]+:\/\//i.test(text) ? text : text.split("/").pop();
 }
 
-// The methods an analysis used, for the facts table.
+// The methods an analysis used (by anybody), for the facts table.
 function methods(a) {
+  const people = a.people || [];
   const found = [];
-  if (a.summary?.frames_with_person) found.push("REBA (NTP 601, INSST)");
-  if (a.lifting?.lifts?.length) found.push("Ecuación de NIOSH (NTP 477) y Guía técnica de manipulación manual de cargas (INSST, 2024)");
-  if (a.office) found.push("RD 488/1997 y Guía técnica de pantallas de visualización (INSST, 2021)");
+  if (people.some(p => p.summary?.frames_with_person)) found.push("REBA (NTP 601, INSST)");
+  if (people.some(p => p.lifting?.lifts?.length)) found.push("Ecuación de NIOSH (NTP 477) y Guía técnica de manipulación manual de cargas (INSST, 2024)");
+  if (people.some(p => p.pushing?.pushes?.length)) found.push("Empuje y tracción: Guía técnica de manipulación manual de cargas (INSST, 2024) e ISO/TR 12295");
+  if (people.some(p => p.office)) found.push("RD 488/1997 y Guía técnica de pantallas de visualización (INSST, 2021)");
   return found.join("; ") || "—";
 }
 
@@ -63,12 +65,15 @@ async function draw() {
       const data = await load(`/api/reports/${encodeURIComponent(name)}`);
       if (!data.written) throw new Error("El informe detallado aún no está generado.");
       const a = data.analysis;
-      const seconds = Math.max(a.summary?.seconds || 0, a.office?.seconds_at_screen || 0);
+      const people = a.people || [];
+      const seconds = Math.max(0, ...people.map(p =>
+        Math.max(p.summary?.seconds || 0, p.office?.seconds_at_screen || 0)));
       type = "Informe detallado";
       title = data.written.title;
       text = data.written.markdown;
       rows = [["Puesto o fuente analizada", sourceName(a.source)],
               ["Fecha del análisis", day(a.created)], ["Duración analizada", minutes(seconds)],
+              ...(people.length > 1 ? [["Personas analizadas", String(people.length)]] : []),
               ["Métodos y criterios", methods(a)], ["Fecha de emisión", day(data.written.created)],
               ["Referencia", name]];
     }

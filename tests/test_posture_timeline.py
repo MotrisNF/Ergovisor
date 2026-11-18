@@ -4,6 +4,7 @@ The frames are skeletons built by hand (see ``test_posture_reba``), at
 10 frames a second.
 """
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -192,3 +193,34 @@ class TestSmoother:
         assert last is not None
         found = measure(last)
         assert found is not None and found.trunk == pytest.approx(40, abs=1)
+
+
+class TestCauses:
+    """What makes a posture risky, in words."""
+
+    def angles_with(self, **changes: object) -> Angles:
+        found = measure(Body().skeleton())
+        assert found is not None
+        return replace(found, **changes)  # type: ignore[arg-type]
+
+    def neck_cause(self, a: Angles) -> list[str]:
+        from src.posture.reba import score
+        from src.posture.timeline import causes
+
+        result = score(a, Task())
+        assert result is not None
+        return [c for c in causes(result, a) if c.startswith("cuello")]
+
+    def test_neck_flexed(self) -> None:
+        assert self.neck_cause(self.angles_with(neck=35.0)) == [
+            "cuello flexionado 35°"]
+
+    def test_neck_extended(self) -> None:
+        assert self.neck_cause(self.angles_with(neck=-25.0)) == [
+            "cuello en extensión"]
+
+    def test_neck_only_turned(self) -> None:
+        """Scored for being turned, not for 7° of flexion: say so."""
+        assert self.neck_cause(self.angles_with(neck=7.0,
+                                                neck_twist=30.0)) == [
+            "cuello girado o inclinado de lado"]

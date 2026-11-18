@@ -236,6 +236,8 @@ class Camera:
 
     RECONNECTS = 5
     DELAY = 2.0
+    # Size asked of a camera of this computer (width, height).
+    SIZE = (1280, 720)
 
     def __init__(self, device: int | str = 0, every: float = 0.0,
                  reconnects: int = RECONNECTS, delay: float = DELAY,
@@ -266,7 +268,7 @@ class Camera:
         Raises:
             RagError: The camera cannot be opened at the start.
         """
-        capture = cv2.VideoCapture(self.device)
+        capture = self._open()
         if not capture.isOpened():
             capture.release()
             raise RagError(f"Cannot open the {self.name}")
@@ -288,6 +290,25 @@ class Camera:
         finally:
             latest.stopped.set()
             reader.join(timeout=self.delay + 1)
+
+    def _open(self) -> Any:
+        """Open the camera; a camera of this computer is asked for
+        ``SIZE`` in MJPG.
+
+        OpenCV opens them at 640x480 unless told otherwise, and many
+        webcams then crop the sides of the sensor: the image covers less
+        than the camera's field of view, and the distances measured from
+        the face come out short (seen on 2026-11-18: 40-45 cm read for
+        about 70). MJPG keeps 30 frames a second at that size on most USB
+        cameras. A camera that cannot gives its nearest size.
+        """
+        capture = cv2.VideoCapture(self.device)
+        if isinstance(self.device, int) and capture.isOpened():
+            capture.set(cv2.CAP_PROP_FOURCC,
+                        cv2.VideoWriter.fourcc(*"MJPG"))
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.SIZE[0])
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.SIZE[1])
+        return capture
 
     def _read(self, capture: Any, latest: _Latest) -> None:
         """Read frames into ``latest`` until stopped or given up.
@@ -318,7 +339,7 @@ class Camera:
                            f"({attempts}/{self.reconnects})...")
                 if latest.stopped.wait(self.delay):
                     return
-                capture = cv2.VideoCapture(self.device)
+                capture = self._open()
         finally:
             capture.release()
             if recorder is not None:

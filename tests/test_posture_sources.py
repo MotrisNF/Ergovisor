@@ -22,6 +22,7 @@ class FakeCapture:
 
     scripts: list[list[int] | None] = []
     opened: list[Any] = []
+    settings: list[tuple[int, float]] = []
     pause = 0.0
 
     def __init__(self, device: Any) -> None:
@@ -43,11 +44,16 @@ class FakeCapture:
     def release(self) -> None:
         self.released = True
 
+    def set(self, prop: int, value: float) -> bool:
+        FakeCapture.settings.append((prop, value))
+        return True
+
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> type[FakeCapture]:
     FakeCapture.scripts = []
     FakeCapture.opened = []
+    FakeCapture.settings = []
     FakeCapture.pause = 0.0
     monkeypatch.setattr(sources.cv2, "VideoCapture", FakeCapture)
     return FakeCapture
@@ -182,3 +188,24 @@ class TestRecorder:
                                   tmp_path: Path) -> None:
         fake.scripts = [[1]]
         assert Camera(0, reconnects=0).record is None
+
+
+class TestCameraSize:
+    """A camera of this computer is asked for 1280x720 in MJPG."""
+
+    def test_local_camera(self, fake: type[FakeCapture]) -> None:
+        import cv2
+
+        fake.scripts = [[1]]
+        values(Camera(0, reconnects=0))
+        settings = dict(fake.settings)
+        assert settings[cv2.CAP_PROP_FRAME_WIDTH] == 1280
+        assert settings[cv2.CAP_PROP_FRAME_HEIGHT] == 720
+        assert settings[cv2.CAP_PROP_FOURCC] == cv2.VideoWriter.fourcc(
+            *"MJPG")
+
+    def test_stream_left_alone(self, fake: type[FakeCapture]) -> None:
+        """An IP camera sends the size it is set to send."""
+        fake.scripts = [[1]]
+        values(Camera("rtsp://h/s", reconnects=0))
+        assert fake.settings == []

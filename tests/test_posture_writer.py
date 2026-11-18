@@ -112,7 +112,7 @@ class TestPrompt:
                   "distance_cm": 48.0, "closest_cm": 30.0,
                   "seconds_neck_flexed": 50.0, "seconds_neck_extended": 0.0,
                   "seconds_neck_turned": 0.0,
-                  "seconds_shoulders_raised": 0.0, "visual_rests": 0,
+                  "visual_rests": 0,
                   "longest_without_rest": 120.0, "breaks": 0,
                   "longest_without_break": 120.0, "blinks_per_minute": 12.0,
                   "events": [], "assumptions": ["supuesto"]}
@@ -259,6 +259,16 @@ class TestDocx:
                    for p in document.paragraphs)
         assert document.tables[0].cell(1, 1).text == "2"
 
+    def test_numbers_kept(self) -> None:
+        """A numbered list cut by bullets keeps the model's numbers (the
+        printed report showed 1, 1, 1, 1)."""
+        from docx import Document
+
+        data = to_docx("1. Uno\n- a\n2. Dos\n- b\n3. Tres\n")
+        texts = [p.text for p in Document(BytesIO(data)).paragraphs]
+        assert [t for t in texts if t[:1].isdigit()] == [
+            "1. Uno", "2. Dos", "3. Tres"]
+
     def test_no_colours(self) -> None:
         """Every heading is black: no colour in the document."""
         from docx import Document
@@ -272,9 +282,12 @@ class TestDocx:
             assert colour in (None, RGBColor(0, 0, 0)), style.name
 
 
-def write_analysis(folder: Path, name: str, created: str) -> None:
+def write_analysis(folder: Path, name: str, created: str,
+                   seconds: float = 60.0, events: bool = True) -> None:
+    summary = {**ANALYSIS["summary"], "seconds": seconds}
     (folder / f"{name}.json").write_text(json.dumps(
-        {**ANALYSIS, "created": created}))
+        {**ANALYSIS, "created": created, "summary": summary,
+         "events": ANALYSIS["events"] if events else []}))
     (folder / f"{name}_regulation.json").write_text(json.dumps(REGULATION))
 
 
@@ -467,6 +480,37 @@ class TestAutomatic:
         assert llm.calls == []
         assert client.get("/api/reports/report_0").json()["writing"] is None
         assert not (reports / "written" / "report_0.json").exists()
+
+    @pytest.mark.parametrize(("seconds", "events"),
+                             [(20.0, True), (300.0, False)])
+    def test_short_or_empty_not_written(self, tmp_path: Path,
+                                        seconds: float,
+                                        events: bool) -> None:
+        """A camera test of a few seconds, or a session with nothing to
+        report, does not call the model by itself."""
+        import time
+
+        from src.webapp import WebApp
+        from test_webapp import manager
+
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        write_analysis(reports, "report_0", "2026-11-17T10:00:00+00:00",
+                       seconds, events)
+        sessions = manager([("status", "running")])
+        llm = FakeLlm()
+        client = TestClient(WebApp(sessions, str(reports),
+                                   str(tmp_path / "up"), "", llm=llm,
+                                   llm_model="fake").app)
+        view = client.post("/api/sessions", json={
+            "kind": "address", "source": "http://a/v"}).json()
+        deadline = time.monotonic() + 5
+        while sessions.view(view["id"]).status != "done":
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        time.sleep(0.3)
+        assert llm.calls == []
+        assert client.get("/api/reports/report_0").json()["writing"] is None
 
     def test_no_model_no_writing(self, tmp_path: Path) -> None:
         from src.webapp import WebApp

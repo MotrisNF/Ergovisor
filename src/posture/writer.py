@@ -27,6 +27,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from ..exceptions import RagError
+from .analysis import people_of
 
 # The models with the most quota for this project's key. Compared on
 # 2026-11-17 with the same analysis: ``lite`` in 7 s, sound but close to
@@ -174,9 +175,34 @@ def _percent(part: float, whole: float) -> str:
 
 
 def describe_analysis(analysis: dict[str, Any]) -> str:
-    """The analysis in words and numbers, for the model."""
+    """The analysis in words and numbers, for the model: each person
+    under their own heading when there are several."""
     lines = [f"Fuente: {analysis.get('source', '')}",
              f"Fecha del análisis: {analysis.get('created', '')}"]
+    people = people_of(analysis)
+    unmeasured = analysis.get("unmeasured", [])
+    if not people:
+        lines.append("No se detectó a ninguna persona en la grabación.")
+    elif len(people) == 1:
+        lines += _describe_person(people[0], unmeasured)
+    else:
+        lines += [
+            "",
+            f"Personas analizadas: {len(people)}, cada una por separado "
+            "(numeradas por su posición en la imagen, sin identificarlas: "
+            "si una persona sale del plano y entra otra, puede heredar su "
+            "número).",
+        ]
+        for person in people:
+            lines += ["", f"# Persona {person.get('person', 1)}"]
+            lines += _describe_person(person, unmeasured)
+    return "\n".join(lines)
+
+
+def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
+                     ) -> list[str]:
+    """One person's analysis in words and numbers."""
+    lines: list[str] = []
     summary = analysis.get("summary", {})
     events = analysis.get("events", [])
     office = analysis.get("office")
@@ -209,7 +235,6 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
                 f"{event['score']}, riesgo {event['risk'].lower()}, "
                 f"actuación {event['action'].lower()}; causas: "
                 f"{', '.join(event['causes']) or 'postura'}.")
-        unmeasured = analysis.get("unmeasured", [])
         if unmeasured:
             lines.append("Aspectos de REBA no medibles con el esqueleto "
                          f"(no puntuados): {', '.join(unmeasured)}.")
@@ -219,8 +244,9 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
             "",
             "## Manipulación manual de cargas (ecuación de NIOSH, NTP 477; "
             "Guía técnica del INSST)",
-            f"Carga indicada: {lifting.get('load_kg') or 'no indicada'} kg; "
-            f"agarre {lifting.get('grip')}; duración de la tarea "
+            "Carga: " + (f"{lifting['load_kg']} kg"
+                         if lifting.get("load_kg") else "no indicada")
+            + f"; agarre {lifting.get('grip')}; duración de la tarea "
             f"{lifting.get('duration')}; peso de referencia "
             f"{lifting.get('reference_kg')} kg.",
             f"Levantamientos y descensos: {len(lifting['lifts'])} "
@@ -235,6 +261,9 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
         for lift in lifting["lifts"]:
             index = (f"IL {lift['index']:.2f} ({lift['risk']})"
                      if lift.get("index") is not None
+                     else f"sin índice: el límite es 0 kg, no aceptable con "
+                          f"ninguna carga ({lift['risk']})"
+                     if lift.get("beyond_limits")
                      else "sin índice (carga no indicada)")
             lines.append(
                 f"- {_clock(lift['start']['second'])}: {lift['kind']} de "
@@ -243,6 +272,39 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
                 f"{'; '.join(lift['notes']) or 'ninguno'}.")
         lines += [f"Aviso de la tarea: {note}." for note in lifting["notes"]]
         lines += [f"Supuesto: {note}" for note in lifting["assumptions"]]
+    pushing = analysis.get("pushing")
+    if pushing and pushing.get("pushes"):
+        initial, sustained = pushing["force_limits_n"]
+        lines += [
+            "",
+            "## Empuje y tracción de cargas (Guía técnica del INSST, "
+            "2024; límites de fuerza de la norma ISO/TR 12295)",
+            f"Empujes y arrastres: {len(pushing['pushes'])} "
+            f"({pushing.get('per_minute', 0):.1f} por minuto).",
+        ]
+        for push in pushing["pushes"]:
+            lines.append(
+                f"- {_clock(push['start'])}–{_clock(push['end'])}: "
+                f"{push['kind']} de {push['metres']:.1f} m; manos entre "
+                f"{push['hands_low_cm']:.0f} y {push['hands_high_cm']:.0f} "
+                f"cm del suelo; tronco hasta {push['trunk']:.0f}°, giro "
+                f"hasta {push['twist']:.0f}°; avisos: "
+                f"{'; '.join(push['notes']) or 'ninguno'}.")
+        if pushing.get("force_initial_n") or pushing.get(
+                "force_sustained_n"):
+            lines.append(
+                f"Fuerza medida: inicial "
+                f"{pushing.get('force_initial_n') or 'no medida'} N, "
+                f"mantenida {pushing.get('force_sustained_n') or 'no medida'}"
+                f" N; límites de la guía: {initial:.0f} N y "
+                f"{sustained:.0f} N.")
+        else:
+            lines.append(
+                "La fuerza no se midió: no se puede saber si se superan los "
+                f"límites de la guía ({initial:.0f} N para iniciar el "
+                f"movimiento y {sustained:.0f} N para mantenerlo).")
+        lines += [f"Aviso de la tarea: {note}." for note in pushing["notes"]]
+        lines += [f"Supuesto: {note}" for note in pushing["assumptions"]]
     if office:
         face = office.get("seconds_with_face") or 0.0
         lines += [
@@ -259,7 +321,6 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
             f"con la cara visible; en extensión "
             f"{_percent(office['seconds_neck_extended'], face)}; girado o "
             f"inclinado {_percent(office['seconds_neck_turned'], face)}.",
-            f"Hombros elevados: {office['seconds_shoulders_raised']:.0f} s.",
             f"Descansos visuales de 20 s o más: {office['visual_rests']}; "
             f"mayor tiempo sin ninguno: "
             f"{office['longest_without_rest'] / 60:.1f} min.",
@@ -279,7 +340,7 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
                          f"{_clock(event['end'])}: {event['title']}, "
                          f"{event['detail']}.")
         lines += [f"Supuesto: {note}" for note in office["assumptions"]]
-    return "\n".join(lines)
+    return lines
 
 
 def collect_sources(regulations: Iterable[dict[str, Any] | None],
@@ -416,9 +477,17 @@ def _finish(kind: Literal["report", "summary"], title: str, model: str,
 def report_prompt(analysis: dict[str, Any],
                   sources: list[tuple[Source, str]]) -> str:
     """What the model is asked for one analysis."""
+    people = len(people_of(analysis))
+    several = (f"""
+En la grabación hay {people} personas, analizadas por separado: es un \
+solo informe conjunto. En Resultados y en Valoración del riesgo, una \
+subsección (###) por persona ("Persona 1", "Persona 2"...) y al final un \
+resumen conjunto; las medidas preventivas, comunes, indicando a qué \
+persona se refieren cuando sea solo a alguna.
+""" if people > 1 else "")
     return f"""Redacta el informe detallado de evaluación de este puesto de \
 trabajo, a partir del análisis automático por vídeo que sigue.
-
+{several}
 Estructura (omite las secciones de riesgos que no se hayan analizado):
 ## 1. Objeto y alcance
 ## 2. Metodología

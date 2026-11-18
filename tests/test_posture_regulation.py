@@ -114,6 +114,18 @@ class TestWarnings:
         assert topics.count("lifting_index") == 1
         assert "employer" in topics
 
+    def test_lift_beyond_the_equation(self) -> None:
+        """A limit of 0 kg is a lifting-index warning, with its reason."""
+        beyond = {**lift(4, None, ["límite de peso recomendado 0 kg por la "
+                                   "carga a más de 63 cm del cuerpo: no es "
+                                   "aceptable con ninguna carga"]),
+                  "limit": 0.0, "beyond_limits": True,
+                  "risk": "Incremento acusado del riesgo"}
+        found = warnings(make_analysis(lifts=[beyond]))
+        index = [text for topic, text in found if topic == "lifting_index"]
+        assert len(index) == 1 and "63 cm" in index[0]
+        assert "acusado" in index[0]
+
     def test_no_lifts_no_employer(self) -> None:
         assert warnings(make_analysis(lifts=[])) == []
 

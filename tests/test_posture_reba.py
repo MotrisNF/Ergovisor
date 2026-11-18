@@ -147,6 +147,18 @@ class TestAngles:
         a = angles_of(Body().bend_trunk(30, LEFT))
         assert abs(a.trunk) < 1 and a.trunk_side == pytest.approx(30, abs=1)
 
+    @pytest.mark.parametrize("camera,seen", [(0, 30), (180, 30), (37, 30),
+                                             (90, 0), (70, 0)])
+    def test_sideways_only_seen_across(self, camera: float,
+                                       seen: float) -> None:
+        """A sideways bend is measured when the person's left-right axis
+        lies across the image; seen side-on it points at the camera (the
+        depth the model measures worst) and is not scored."""
+        body = Body().bend_trunk(30, LEFT).yaw(camera)
+        if camera == 180:
+            body.hidden = {Point.NOSE}
+        assert angles_of(body).trunk_side == pytest.approx(seen, abs=1)
+
     @pytest.mark.parametrize("camera", [90, 180, 37])
     def test_any_camera(self, camera: float) -> None:
         """The same posture seen from the side, the back or any angle."""

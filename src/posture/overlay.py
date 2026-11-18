@@ -1,6 +1,7 @@
-"""The analysis drawn on the image: the skeleton coloured by its risk,
+"""The analysis drawn on the image: each skeleton coloured by its risk,
 the score and the main angles, and a warning while a moment of risk
-lasts.
+lasts. With several people, each skeleton carries its person's number
+and the panel has a line for each.
 
 The same drawing goes to a video file (a recording, to check the
 analysis by eye) or to a window on the screen (a live camera).
@@ -17,12 +18,13 @@ from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageFont
 
 from ..exceptions import RagError
+from .analysis import Seen
 from .angles import Angles
 from .lifting import Lift
 from .office import (MIN_DISTANCE_CM, NECK_EXTENSION, NECK_FLEXION,
                      NECK_TILT, NECK_TURN, OfficeState)
 from .reba import Reba
-from .skeleton import Point, Skeleton
+from .skeleton import MIN_VISIBILITY, Point, Skeleton
 from .timeline import Event
 
 # The bones drawn: pairs of MediaPipe landmarks.
@@ -106,42 +108,93 @@ class Overlay:
         self._small = _font(18)
 
     def draw(self, image: NDArray[np.uint8], second: float,
-             skeleton: Skeleton | None, angles: Angles | None,
-             reba: Reba | None, event: Event | None,
-             lift: Lift | None = None,
-             office: OfficeState | None = None) -> NDArray[np.uint8]:
-        """The frame with the analysis on it (RGB).
+             people: list[Seen]) -> NDArray[np.uint8]:
+        """The frame with the analysis of each person on it (RGB).
 
         At a screen (``office``), the panel shows the screen work
         instead of REBA, and only the upper body is drawn.
         """
         picture = Image.fromarray(image)
         pen = ImageDraw.Draw(picture, "RGBA")
-        colour = COLOURS[reba.level] if reba is not None else NO_SCORE
-        if office is not None:
-            colour = self._office_colour(office)
-        if skeleton is not None and skeleton.pixels is not None:
-            self._skeleton(pen, skeleton, picture.size, colour)
-        if office is not None:
-            self._office(pen, second, office, colour)
+        several = len(people) > 1 or any(p.person > 1 for p in people)
+        for seen in people:
+            if seen.skeleton.pixels is not None:
+                self._skeleton(pen, seen.skeleton, picture.size,
+                               self._colour(seen),
+                               seen.person if several else None)
+        if not people:
+            self._panel(pen, second, None, None, NO_SCORE)
+        elif len(people) == 1:
+            seen = people[0]
+            title = f"Persona {seen.person} · " if several else ""
+            if seen.office is not None:
+                self._office(pen, second, seen.office, self._colour(seen),
+                             title)
+            else:
+                self._panel(pen, second, seen.angles, seen.reba,
+                            self._colour(seen), title)
         else:
-            self._panel(pen, second, angles, reba, colour)
-        if lift is not None:
-            self._lift(pen, lift, picture.size)
-        if event is not None:
-            self._warning(pen, event, picture.size)
+            self._people(pen, second, people)
+        lifts = [(p.lift, p.person) for p in people if p.lift is not None]
+        if lifts:
+            lift, person = max(lifts, key=lambda item: item[0].end.second)
+            self._lift(pen, lift, picture.size,
+                       f"Persona {person} · " if several else "")
+        events = [(p.event, p.person) for p in people if p.event is not None]
+        if events:
+            event, person = max(events, key=lambda item: item[0].level)
+            self._warning(pen, event, picture.size,
+                          f"Persona {person} · " if several else "")
         return np.asarray(picture, dtype=np.uint8)
 
+    def _colour(self, seen: Seen) -> tuple[int, int, int]:
+        """The colour of a person's risk now."""
+        if seen.office is not None:
+            return self._office_colour(seen.office)
+        return COLOURS[seen.reba.level] if seen.reba is not None else NO_SCORE
+
+    def _people(self, pen: ImageDraw.ImageDraw, second: float,
+                people: list[Seen]) -> None:
+        """A line for each person, top left, coloured by their risk."""
+        lines = []
+        for seen in people:
+            if seen.office is not None:
+                face = seen.office.face
+                what = ("pantalla, " + (
+                    f"distancia {face.distance_cm:.0f} cm, cuello "
+                    f"{face.pitch:+.0f}°"
+                    if face is not None and face.distance_cm is not None
+                    else "cara no visible"))
+            elif seen.reba is not None:
+                what = (f"REBA {seen.reba.score} · riesgo "
+                        f"{seen.reba.risk.lower()}")
+            else:
+                what = "sin puntuar (cuerpo no visible)"
+            lines.append((f"Persona {seen.person}: {what}",
+                          self._colour(seen)))
+        height = 14 + 30 * (len(lines) + 1)
+        pen.rectangle([10, 10, 520, 10 + height], fill=(0, 0, 0, 160))
+        for number, (line, colour) in enumerate(lines):
+            top = 14 + 30 * number
+            pen.rectangle([10, top, 18, top + 30], fill=colour)
+            pen.text((28, 18 + 30 * number), line, fill=(255, 255, 255),
+                     font=self._small)
+        pen.text((28, 18 + 30 * len(lines)), _clock(second),
+                 fill=(255, 255, 255), font=self._small)
+
     def _lift(self, pen: ImageDraw.ImageDraw, lift: Lift,
-              size: tuple[int, int]) -> None:
+              size: tuple[int, int], title: str = "") -> None:
         """The last lift, top right: its limit and its index."""
         width, _ = size
-        level = (0 if lift.index is None or lift.index <= 1
+        level = (4 if lift.beyond_limits
+                 else 0 if lift.index is None or lift.index <= 1
                  else 3 if lift.index <= 3 else 4)
-        lines = [f"{lift.kind.capitalize()} de {lift.d:.0f} cm",
+        lines = [f"{title}{lift.kind.capitalize()} de {lift.d:.0f} cm",
                  f"Peso límite (NIOSH): {lift.limit:.1f} kg"]
         if lift.index is not None:
             lines.append(f"Índice: {lift.index:.2f} · {lift.risk.lower()}")
+        elif lift.beyond_limits:
+            lines.append("Fuera de los límites de la ecuación")
         # As wide as its longest line.
         longest = max(pen.textlength(line, font=self._font if n == 0
                                      else self._small)
@@ -158,9 +211,10 @@ class Overlay:
                      font=self._font if number == 0 else self._small)
 
     def _skeleton(self, pen: ImageDraw.ImageDraw, skeleton: Skeleton,
-                  size: tuple[int, int], colour: tuple[int, int, int]
-                  ) -> None:
-        """The bones and joints seen, in the colour of the risk."""
+                  size: tuple[int, int], colour: tuple[int, int, int],
+                  person: int | None = None) -> None:
+        """The bones and joints seen, in the colour of the risk, and the
+        person's number over the head (when there are several)."""
         assert skeleton.pixels is not None
         width, height = size
         thick = max(3, width // 250)
@@ -178,16 +232,26 @@ class Overlay:
                 x, y = at(point)
                 pen.ellipse([x - thick, y - thick, x + thick, y + thick],
                             fill=(255, 255, 255))
+        if person is not None:
+            seen = skeleton.pixels[skeleton.visibility >= MIN_VISIBILITY]
+            if len(seen):
+                x = float(seen[:, 0].mean()) * width
+                y = max(0.0, float(seen[:, 1].min()) * height - 44)
+                label = str(person)
+                pen.rectangle([x - 18, y, x + 18, y + 34], fill=colour)
+                pen.text((x - pen.textlength(label, font=self._font) / 2,
+                          y + 4), label, fill=(0, 0, 0), font=self._font)
 
     def _panel(self, pen: ImageDraw.ImageDraw, second: float,
                angles: Angles | None, reba: Reba | None,
-               colour: tuple[int, int, int]) -> None:
+               colour: tuple[int, int, int], title: str = "") -> None:
         """The score and the main angles, top left."""
         if reba is None:
-            lines = ["Sin persona detectada"]
+            lines = [f"{title}Sin puntuar" if title
+                     else "Sin persona detectada"]
         else:
-            lines = [f"REBA {reba.score} · riesgo {reba.risk.lower()} "
-                     f"(nivel {reba.level})"]
+            lines = [f"{title}REBA {reba.score} · riesgo "
+                     f"{reba.risk.lower()} (nivel {reba.level})"]
         if angles is not None:
             left = angles.left.upper if angles.left else None
             right = angles.right.upper if angles.right else None
@@ -218,10 +282,11 @@ class Overlay:
         return COLOURS[1]
 
     def _office(self, pen: ImageDraw.ImageDraw, second: float,
-                office: OfficeState, colour: tuple[int, int, int]) -> None:
+                office: OfficeState, colour: tuple[int, int, int],
+                title: str = "") -> None:
         """The screen work, top left: distance, neck, blinks, rests."""
         face = office.face
-        lines = ["Puesto con pantalla"]
+        lines = [f"{title}Puesto con pantalla"]
         if face is None:
             lines.append("Cara no visible (mirando a otro lado)")
         else:
@@ -243,10 +308,12 @@ class Overlay:
                      font=self._font if number == 0 else self._small)
 
     def _warning(self, pen: ImageDraw.ImageDraw, event: Event,
-                 size: tuple[int, int]) -> None:
-        """A band at the bottom while a moment of risk lasts."""
+                 size: tuple[int, int], title: str = "") -> None:
+        """A band at the bottom while a moment of risk lasts (the worst,
+        with several people)."""
         width, height = size
-        text = (f"Riesgo {event.risk.lower()} desde {_clock(event.start)}: "
+        text = (f"{title}Riesgo {event.risk.lower()} desde "
+                f"{_clock(event.start)}: "
                 + (", ".join(event.causes) or "postura"))
         pen.rectangle([0, height - 50, width, height],
                       fill=(*COLOURS[event.level], 220))
@@ -291,16 +358,23 @@ class Overlay:
             cv2.destroyAllWindows()
 
 
-def _to_h264(path: Path) -> None:
-    """Re-encode a video as H.264 in place, if ffmpeg is there."""
+def _to_h264(path: Path, preset: str = "medium") -> None:
+    """Re-encode a video as H.264 in place, if ffmpeg is there.
+
+    Args:
+        path: The video.
+        preset: ffmpeg's speed for the encoding: ``ultrafast`` is several
+            times faster and gives a bigger file of the same picture (for
+            long camera recordings); ``medium`` is ffmpeg's default.
+    """
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         return
     converted = path.with_name(f"{path.stem}.h264{path.suffix}")
     done = subprocess.run(
         [ffmpeg, "-loglevel", "error", "-y", "-i", str(path), "-c:v",
-         "libx264", "-pix_fmt", "yuv420p", "-crf", "23", "-movflags",
-         "+faststart", str(converted)], check=False)
+         "libx264", "-preset", preset, "-pix_fmt", "yuv420p", "-crf", "23",
+         "-movflags", "+faststart", str(converted)], check=False)
     if done.returncode == 0:
         converted.replace(path)
     else:

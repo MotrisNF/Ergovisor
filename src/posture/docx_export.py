@@ -40,7 +40,7 @@ def to_docx(markdown: str) -> bytes:
         A .docx file.
     """
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Cm, Pt, RGBColor
 
     document = Document()
     style = document.styles["Normal"]
@@ -87,13 +87,18 @@ def to_docx(markdown: str) -> bytes:
                           and text else text)
             continue
         bullet = re.match(r"^[-*]\s+(.*)$", stripped)
-        numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        numbered = re.match(r"^(\d+)[.)]\s+(.*)$", stripped)
         if bullet:
             _runs(document.add_paragraph(style="List Bullet"),
                   bullet.group(1))
         elif numbered:
-            _runs(document.add_paragraph(style="List Number"),
-                  numbered.group(1))
+            # The model's own number: Word's numbered style counts on
+            # through the whole document, every list after the first
+            # would not start at 1.
+            paragraph = document.add_paragraph()
+            paragraph.paragraph_format.left_indent = Cm(0.63)
+            paragraph.paragraph_format.first_line_indent = Cm(-0.63)
+            _runs(paragraph, f"{numbered.group(1)}. {numbered.group(2)}")
         else:
             _runs(document.add_paragraph(), stripped)
         index += 1

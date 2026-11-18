@@ -886,6 +886,7 @@ class RagCLI:
             camera: str = "",
             every: Annotated[float, Field(ge=0)] = 0.1,
             model: Literal["lite", "full", "heavy"] = "full",
+            people: Annotated[int, Field(ge=1, le=20)] = 3,
             load_kg: Annotated[float, Field(ge=0)] = 0.0,
             sudden: bool = False,
             coupling: Annotated[int, Field(ge=0, le=3)] = 0,
@@ -898,13 +899,15 @@ class RagCLI:
             task_duration: Literal["corta", "moderada", "larga"] = "larga",
             lifts_per_minute: Annotated[float, Field(ge=0)] = 0.0,
             height_cm: Annotated[float, Field(ge=0, le=250)] = 0.0,
+            push_force_initial: Annotated[float, Field(ge=0)] = 0.0,
+            push_force_sustained: Annotated[float, Field(ge=0)] = 0.0,
             regulation_dir: str = "",
             retriever: RetrieverMode = "bm25",
             k: Annotated[int, Field(gt=0)] = 3,
             save_directory: Annotated[
                 str, Field(min_length=1)] = "data/output/posture"
             ) -> None:
-        """Score the postures of a person working, with REBA.
+        """Score the postures of the people working, with REBA.
 
         Reads a recorded video (``--video``) or a live camera
         (``--camera``): the analysis is the same, frame by frame. Each
@@ -921,6 +924,9 @@ class RagCLI:
                 a second); a slower computer can raise it.
             model: Pose model: ``lite`` is fastest, ``heavy`` most
                 precise.
+            people: The most people analysed at once, each apart
+                ("Persona 1", "Persona 2"... by where they are, nobody
+                is recognised). More cost more time of the pose model.
             load_kg: Load handled or force applied, which the video does
                 not show.
             sudden: Whether that load or force comes suddenly.
@@ -944,6 +950,10 @@ class RagCLI:
                 lifts in the video.
             height_cm: The person's real height, to scale the distances
                 the model measures (0: the model's own scale).
+            push_force_initial: Force to start pushing or pulling the
+                load, N, measured with a dynamometer (0: not measured).
+            push_force_sustained: Force to keep it moving, N (0: not
+                measured).
             regulation_dir: The index of the prevention corpus
                 (``data/processed/prl``): when given, the regulation of
                 each kind of risk is printed as soon as it is first seen,
@@ -954,7 +964,8 @@ class RagCLI:
             save_directory: Folder where the analysis JSON is written.
         """
         from .posture.analysis import (analyse, describe, describe_lift,
-                                       describe_office)
+                                       describe_office, describe_push)
+        from .posture.pushing import Pushing
         from .posture.face import FaceEstimator
         from .posture.office import Office
         from .posture.lifting import Lifting, reference_kg
@@ -983,6 +994,10 @@ class RagCLI:
             duration=task_duration,
             reference_kg=reference_kg(sex, age or None),
             lifts_per_minute=lifts_per_minute, height_cm=height_cm or None)
+        pushing = Pushing(sex=sex,
+                          force_initial_n=push_force_initial or None,
+                          force_sustained_n=push_force_sustained or None,
+                          height_cm=height_cm or None)
         # A recording is drawn at the rate its frames are analysed, so the
         # drawn video plays at real speed.
         rate = (frames.fps if isinstance(frames, VideoFile)
@@ -999,32 +1014,41 @@ class RagCLI:
             live = LiveRegulation(
                 self._build_retriever(regulation_dir, retriever), k)
         print(f"Loading the pose model ({model})...", file=sys.stderr)
-        estimator = PoseEstimator(model)
+        estimator = PoseEstimator(model, people=people)
         # The face model is only used when the camera sees a person
         # seated at the screen (the hips out of the picture).
-        faces = FaceEstimator()
+        faces = FaceEstimator(people=people)
         started = datetime.now()
         progress = tqdm(desc="Analysing", unit="frame", file=sys.stderr)
 
-        def on_event(event: Any) -> None:
-            tqdm.write(describe(event), file=sys.stderr)
+        def on_event(person: int, event: Any) -> None:
+            tqdm.write(f"Persona {person} {describe(event)}",
+                       file=sys.stderr)
             if live is not None:
                 self._print_findings(live.event(event))
 
-        def on_office(warning: Any) -> None:
-            tqdm.write(describe_office(warning), file=sys.stderr)
+        def on_office(person: int, warning: Any) -> None:
+            tqdm.write(f"Persona {person} {describe_office(warning)}",
+                       file=sys.stderr)
             if live is not None:
                 self._print_findings(live.office(warning))
 
-        def on_lift(lift: Any) -> None:
-            tqdm.write(describe_lift(lift), file=sys.stderr)
+        def on_lift(person: int, lift: Any) -> None:
+            tqdm.write(f"Persona {person} {describe_lift(lift)}",
+                       file=sys.stderr)
             if live is not None:
                 self._print_findings(live.lift(lift))
 
-        def draw(frame: Any, *found: Any) -> bool:
+        def on_push(person: int, push: Any) -> None:
+            tqdm.write(f"Persona {person} {describe_push(push)}",
+                       file=sys.stderr)
+            if live is not None:
+                self._print_findings(live.push(push))
+
+        def draw(frame: Any, seen: Any) -> bool:
             assert drawing is not None
             return drawing.write(drawing.draw(frame.image, frame.timestamp,
-                                              *found))
+                                              seen))
 
         try:
             result = analyse(
@@ -1035,34 +1059,44 @@ class RagCLI:
                 on_result=draw if drawing is not None else None,
                 lifting=lifting,
                 on_lift=on_lift, office=Office(), faces=faces,
-                on_office=on_office)
+                on_office=on_office, pushing=pushing, on_push=on_push,
+                max_people=people)
         finally:
             progress.close()
             estimator.close()
             faces.close()
             if drawing is not None:
                 drawing.close()
-        summary = result.summary
-        print(f"{summary.frames_with_person} of {summary.frames} frames "
-              f"with a person, {summary.seconds:.1f} s; "
-              f"{len(result.events)} moments of risk, highest REBA "
-              f"{summary.max_score}", file=sys.stderr)
-        if result.lifting is not None:
-            report = result.lifting
-            index = (f", highest lifting index {report.max_index:.2f}"
-                     if report.max_index is not None else "")
-            print(f"{len(report.lifts)} lifts and lowerings, "
-                  f"{report.lifts_per_minute:.1f} a minute{index}",
-                  file=sys.stderr)
+        if not result.people:
+            print("Nobody was seen", file=sys.stderr)
+        for seen in result.people:
+            summary = seen.summary
+            print(f"Persona {seen.person}: {summary.frames_with_person} of "
+                  f"{summary.frames} frames scored, {summary.seconds:.1f} "
+                  f"s; {len(seen.events)} moments of risk, highest REBA "
+                  f"{summary.max_score}", file=sys.stderr)
+            if seen.lifting is not None:
+                report = seen.lifting
+                index = (f", highest lifting index {report.max_index:.2f}"
+                         if report.max_index is not None else "")
+                if report.beyond_limits:
+                    index += (f", {report.beyond_limits} with a limit of 0 "
+                              "kg (beyond the equation)")
+                print(f"  {len(report.lifts)} lifts and lowerings, "
+                      f"{report.lifts_per_minute:.1f} a minute{index}",
+                      file=sys.stderr)
+            if seen.pushing is not None:
+                print(f"  {len(seen.pushing.pushes)} pushes and pulls",
+                      file=sys.stderr)
+            if seen.office is not None:
+                screen = seen.office
+                distance = (f", usual distance {screen.distance_cm:.0f} cm"
+                            if screen.distance_cm is not None else "")
+                print(f"  At a screen {screen.seconds_at_screen:.0f} s"
+                      f"{distance}, {len(screen.events)} warnings, "
+                      f"{screen.blinks} blinks", file=sys.stderr)
         # A camera session is named by when it started (local time), so
         # a new session never overwrites the previous one.
-        if result.office is not None:
-            screen = result.office
-            distance = (f", usual distance {screen.distance_cm:.0f} cm"
-                        if screen.distance_cm is not None else "")
-            print(f"At a screen {screen.seconds_at_screen:.0f} s{distance}, "
-                  f"{len(screen.events)} warnings, "
-                  f"{screen.blinks} blinks", file=sys.stderr)
         stem = (Path(video).stem if video
                 else f"camera_{started:%Y-%m-%d_%H-%M-%S}")
         path = self._save_json(save_directory, f"{stem}.json", result)
@@ -1158,7 +1192,7 @@ class RagCLI:
     def app(self,
             port: Annotated[int, Field(ge=1, le=65535)] = 8000,
             limit: Annotated[int, Field(ge=1, le=16)] = 4,
-            model: Literal["lite", "full", "heavy"] = "lite",
+            model: Literal["lite", "full", "heavy"] = "full",
             regulation_dir: str = "data/processed/prl",
             save_directory: Annotated[
                 str, Field(min_length=1)] = "data/output/posture",
@@ -1178,7 +1212,10 @@ class RagCLI:
         Args:
             port: Port of the page (``http://127.0.0.1:<port>``).
             limit: Cameras and videos analysed at the same time, at most.
-            model: Pose model when a source does not choose one.
+            model: Pose model when a source does not choose one:
+                ``full`` (calibrated on 2026-11-18: it measures the arms,
+                the stature and the lifts better than ``lite``, which is
+                faster for many cameras at once).
             regulation_dir: Index of the prevention corpus, for the
                 regulation of each risk; empty: none.
             save_directory: Where the reports are read and written.

@@ -30,6 +30,14 @@ NECK_NEUTRAL = 15.0
 # than this; below it, the sideways part of a hanging arm is mostly the
 # depth error of one camera (seen on real video from the side).
 ABDUCTION_MIN = 45.0
+# Ours: a sideways bend (of the trunk, or of the head on it) is only
+# measured when the person's left-right axis lies at least this much
+# across the image (its share along the image's x; 1 facing the camera,
+# 0 side-on). Side-on, that bend points at the camera, the depth the
+# model measures worst: standing straight it read 10-13° (REBA counts
+# from 15°), facing the camera 1°; real bends facing it, 13-19° (B1, B2,
+# 2026-11-18). Not measurable, it is not scored.
+SIDE_SEEN = 0.5
 
 
 @dataclass(frozen=True)
@@ -58,11 +66,13 @@ class Angles:
     Attributes:
         timestamp: Seconds since the start.
         trunk: Flexion of the trunk from vertical; negative is extension.
-        trunk_side: Sideways bend of the trunk, in absolute value.
+        trunk_side: Sideways bend of the trunk, in absolute value; 0
+            when the person is seen side-on (see ``SIDE_SEEN``).
         trunk_twist: Twist of the shoulders against the hips.
         neck: Flexion of the head relative to the trunk; negative is
             extension.
-        neck_side: Sideways bend of the head relative to the trunk.
+        neck_side: Sideways bend of the head relative to the trunk; 0
+            seen side-on.
         neck_twist: Twist of the head against the shoulders, or ``None``
             when both ears are not seen.
         knee: The larger flexion of both knees.
@@ -168,7 +178,9 @@ def measure(skeleton: Skeleton) -> Angles | None:
     shoulders = skeleton.middle(Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER)
     trunk = shoulders - hips
     trunk_flexion = _signed(trunk, up, forward)
-    trunk_side = abs(_signed(trunk, up, lateral))
+    # MediaPipe's x axis is the image's.
+    side_seen = abs(float(lateral[0])) >= SIDE_SEEN
+    trunk_side = abs(_signed(trunk, up, lateral)) if side_seen else 0.0
     shoulder_line = _flat(p(Point.RIGHT_SHOULDER) - p(Point.LEFT_SHOULDER),
                           up)
     twist = _between(shoulder_line, lateral)
@@ -179,7 +191,8 @@ def measure(skeleton: Skeleton) -> Angles | None:
                  else p(Point.NOSE))
     head = head_base - shoulders
     neck = _signed(head, up, forward) - trunk_flexion - NECK_NEUTRAL
-    neck_side = abs(_signed(head, up, lateral) - _signed(trunk, up, lateral))
+    neck_side = (abs(_signed(head, up, lateral)
+                     - _signed(trunk, up, lateral)) if side_seen else 0.0)
     neck_twist = (_between(_flat(p(Point.RIGHT_EAR) - p(Point.LEFT_EAR), up),
                            shoulder_line)
                   if len(seen_ears) == 2 else None)

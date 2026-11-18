@@ -46,6 +46,8 @@ class Face:
         distance_cm: Eyes to camera, estimated from the iris; ``None``
             when the irises are not measured.
         blink: How closed the eyes are, from 0 (open) to 1 (closed).
+        centre: Where the face is in the image (x and y from 0 to 1), to
+            tell whose it is; ``None`` when unknown.
     """
 
     timestamp: float
@@ -54,6 +56,7 @@ class Face:
     roll: float
     distance_cm: float | None
     blink: float
+    centre: tuple[float, float] | None = None
 
 
 def head_angles(matrix: NDArray[np.float64]) -> tuple[float, float, float]:
@@ -98,10 +101,14 @@ def eye_distance_cm(points: NDArray[np.float64], width: int,
 
 
 class FaceEstimator:
-    """Finds one face in each frame, in order (like ``PoseEstimator``)."""
+    """Finds the faces in each frame, in order (like ``PoseEstimator``)."""
 
-    def __init__(self, cache: Path = CACHE) -> None:
+    def __init__(self, cache: Path = CACHE, people: int = 1) -> None:
         """Load the model (a few MB, downloaded the first time).
+
+        Args:
+            cache: Folder where it is kept.
+            people: The most faces found in a frame.
 
         Raises:
             RagError: The model cannot be downloaded or loaded.
@@ -112,7 +119,7 @@ class FaceEstimator:
                         "face")
         options = vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(path)),
-            running_mode=vision.RunningMode.VIDEO, num_faces=1,
+            running_mode=vision.RunningMode.VIDEO, num_faces=people,
             output_face_blendshapes=True,
             output_facial_transformation_matrixes=True)
         try:
@@ -124,31 +131,40 @@ class FaceEstimator:
         self._last = -1
 
     def find(self, frame: Frame) -> Face | None:
-        """The face in a frame, or ``None`` without one."""
+        """The (first) face in a frame, or ``None`` without one."""
+        found = self.find_all(frame)
+        return found[0] if found else None
+
+    def find_all(self, frame: Frame) -> list[Face]:
+        """The faces in a frame, in no particular order."""
         import mediapipe as mp
 
         millisecond = int(frame.timestamp * 1000)
         if millisecond <= self._last:
-            return None
+            return []
         self._last = millisecond
         image = mp.Image(image_format=mp.ImageFormat.SRGB,
                          data=np.ascontiguousarray(frame.image))
         with _quiet():
             found = self._landmarker.detect_for_video(image, millisecond)
-        if (not found.face_landmarks
-                or not found.facial_transformation_matrixes):
-            return None
-        points = np.array([[p.x, p.y, p.z] for p in found.face_landmarks[0]],
-                          dtype=float)
-        pitch, yaw, roll = head_angles(
-            np.asarray(found.facial_transformation_matrixes[0]))
-        shapes = ({s.category_name: s.score
-                   for s in found.face_blendshapes[0]}
-                  if found.face_blendshapes else {})
-        blink = max(shapes.get("eyeBlinkLeft", 0.0),
-                    shapes.get("eyeBlinkRight", 0.0))
-        return Face(frame.timestamp, pitch, yaw, roll,
-                    eye_distance_cm(points, frame.image.shape[1]), blink)
+        faces = []
+        for n, landmarks in enumerate(found.face_landmarks):
+            if n >= len(found.facial_transformation_matrixes):
+                break
+            points = np.array([[p.x, p.y, p.z] for p in landmarks],
+                              dtype=float)
+            pitch, yaw, roll = head_angles(
+                np.asarray(found.facial_transformation_matrixes[n]))
+            shapes = ({s.category_name: s.score
+                       for s in found.face_blendshapes[n]}
+                      if n < len(found.face_blendshapes) else {})
+            blink = max(shapes.get("eyeBlinkLeft", 0.0),
+                        shapes.get("eyeBlinkRight", 0.0))
+            centre = points[:, :2].mean(axis=0)
+            faces.append(Face(frame.timestamp, pitch, yaw, roll,
+                              eye_distance_cm(points, frame.image.shape[1]),
+                              blink, (float(centre[0]), float(centre[1]))))
+        return faces
 
     def close(self) -> None:
         """Free the model."""

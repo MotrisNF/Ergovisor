@@ -8,7 +8,8 @@ from collections.abc import Sequence
 import numpy as np
 import pytest
 
-from src.posture.lifting import (Lift, Lifting, place, reference_kg,
+from src.posture.lifting import (Lift, Lifting, Place, place,
+                                 reference_kg,
                                  REFERENCE_UNKNOWN)
 from src.posture.niosh import (LC, asymmetry, coupling, displacement,
                                evaluate, frequency, horizontal, risk_of,
@@ -80,6 +81,24 @@ class TestEvaluate:
         result = evaluate(25, 75, 20, 0, 0.1, "corta", "bueno", 23)
         assert result.limit == LC and result.index == 1.0
 
+    def test_beyond_the_equation(self) -> None:
+        """H over 63 cm: the limit is 0 kg (NTP 477), no index, and the
+        risk is high whatever the load (it was an infinite index, saved
+        as "no load")."""
+        for load in (10, None):
+            result = evaluate(70, 75, 50, 0, 1, "larga", "bueno", load)
+            assert result.limit == 0 and result.index is None
+            assert result.risk == "Incremento acusado del riesgo"
+
+    def test_lift_beyond_the_equation_says_why(self) -> None:
+        """A lift far from the body: marked, with the reason first."""
+        lifting = Lifting(load_kg=5)
+        lift = lifting._lift(Place(second=0, v=10, h=70, a=0),
+                             Place(second=2, v=80, h=70, a=0), 1.0)
+        assert lift.beyond_limits and lift.index is None
+        assert lift.notes[0].startswith("límite de peso recomendado 0 kg "
+                                        "por la carga a más de 63 cm")
+
     def test_far_low_lift(self) -> None:
         """From the floor and far: a much lower limit."""
         result = evaluate(50, 10, 70, 0, 1, "larga", "bueno", 10)
@@ -94,13 +113,15 @@ class TestEvaluate:
         assert result.index is None and result.limit > 0
 
 
-def reaching(depth: float, height_drop: float) -> Body:
-    """Standing with the hands held ``depth`` metres ahead of the ankles
-    and ``height_drop`` metres below the hips."""
+def reaching(depth: float, height_drop: float,
+             apart: float = 0.10) -> Body:
+    """Standing with the hands held ``depth`` metres ahead of the ankles,
+    ``height_drop`` metres below the hips and ``apart`` metres from each
+    other (0.10: holding something; about 0.40: hanging at the sides)."""
     body = Body()
     hands = np.array([0.0, height_drop, 0.0]) + FORWARD * depth
     for side in ("LEFT", "RIGHT"):
-        offset = 0.05 if side == "LEFT" else -0.05
+        offset = apart / 2 if side == "LEFT" else -apart / 2
         body.points[Point[f"{side}_WRIST"]] = hands + [offset, 0, 0]
         body.points[Point[f"{side}_INDEX"]] = hands + [offset, 0.05, 0]
     for side, x in (("LEFT", 0.10), ("RIGHT", -0.10)):
@@ -122,13 +143,26 @@ class TestPlace:
         assert found.a == pytest.approx(0, abs=2)
 
     def test_twist(self) -> None:
-        """The hands as far to one side as ahead: 45 degrees."""
+        """The shoulders turned 45 degrees against the hips: A is 45."""
+        body = reaching(0.30, 0.20)
+        centre = (body.points[Point.LEFT_SHOULDER]
+                  + body.points[Point.RIGHT_SHOULDER]) / 2
+        body.turn([Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER], centre,
+                  FORWARD, np.array([1.0, 0.0, 0.0]), 45)
+        found = place(body.skeleton())
+        assert found is not None and found.a == pytest.approx(45, abs=3)
+
+    def test_hands_to_the_side_are_no_twist(self) -> None:
+        """Only the trunk counts as twist: hands off to one side with the
+        trunk straight read no twist (the depth of a side view is too
+        uncertain to tell them from hands in front)."""
         body = reaching(0.30, 0.20)
         for p in (Point.LEFT_WRIST, Point.RIGHT_WRIST, Point.LEFT_INDEX,
                   Point.RIGHT_INDEX):
             body.points[p] = body.points[p] + np.array([0.30, 0, 0])
         found = place(body.skeleton())
-        assert found is not None and found.a == pytest.approx(45, abs=3)
+        assert found is not None and found.a == pytest.approx(0, abs=3)
+        assert found.h == pytest.approx(30, abs=1)
 
     def test_feet_not_seen(self) -> None:
         """Without the feet there is no floor to measure from."""
@@ -140,18 +174,19 @@ class TestPlace:
 
 
 def play(lifting: Lifting,
-         plan: Sequence[tuple[float, float, float]]) -> list[Lift]:
+         plan: Sequence[tuple[float, float, float]],
+         apart: float = 0.10) -> list[Lift]:
     """Feed hand heights: ``(seconds, from_drop, to_drop)`` segments, the
-    hands moving linearly 30 cm ahead; the lifts found."""
+    hands moving linearly 30 cm ahead, ``apart`` metres from each other;
+    the lifts found."""
     found: list[Lift] = []
     second = 0.0
     for seconds, start, end in plan:
         steps = int(seconds * FPS)
         for n in range(steps):
             drop = start + (end - start) * n / max(steps - 1, 1)
-            lift = lifting.add(reaching(0.30, drop).skeleton(second))
-            if lift is not None:
-                found.append(lift)
+            found += lifting.add(reaching(0.30, drop, apart)
+                                 .skeleton(second))
             second += 1 / FPS
     return found
 
@@ -169,10 +204,101 @@ class TestLifting:
         assert lift.index is not None and lift.limit < 23
 
     def test_lowering(self) -> None:
-        """Down counts too, as a lowering."""
-        lifts = play(Lifting(load_kg=10),
-                     [(2, 0.10, 0.10), (2, 0.10, 0.70), (2, 0.70, 0.70)])
-        assert [lift.kind for lift in lifts] == ["descenso"]
+        """Down counts too, as a lowering. Ending low, it is in the
+        report (live it is known when the hands rise again)."""
+        lifting = Lifting(load_kg=10)
+        play(lifting, [(2, 0.10, 0.10), (2, 0.10, 0.70), (2, 0.70, 0.70)])
+        assert [lift.kind for lift in lifting.report().lifts] == [
+            "descenso"]
+
+    def test_pick_up_counts_once(self) -> None:
+        """Reaching down empty, lifting to the chest, lowering it to the
+        floor and standing up empty: two handlings, not four."""
+        lifting = Lifting(load_kg=5)
+        play(lifting, [(2, 0.0, 0.0), (2, 0.0, 0.75), (1, 0.75, 0.75),
+                       (2, 0.75, -0.35), (2, -0.35, -0.35),
+                       (2, -0.35, 0.75), (1, 0.75, 0.75), (2, 0.75, 0.0),
+                       (2, 0.0, 0.0)], apart=0.40)
+        kinds = [lift.kind for lift in lifting.report().lifts]
+        assert kinds == ["levantamiento", "descenso"]
+
+    def test_pause_half_way_down(self) -> None:
+        """Pausing half way down and going on: one lowering, not two
+        short movements."""
+        lifting = Lifting(load_kg=5)
+        play(lifting, [(2, -0.35, -0.35), (1.5, -0.35, 0.10),
+                       (1.5, 0.10, 0.10), (1.5, 0.10, 0.75),
+                       (1, 0.75, 0.75), (2, 0.75, 0.0), (2, 0.0, 0.0)],
+             apart=0.40)
+        [lowering] = [lift for lift in lifting.report().lifts
+                      if lift.kind == "descenso"]
+        assert lowering.d == pytest.approx(110, abs=8)
+
+    def test_pause_on_the_way_up_counts_once(self) -> None:
+        """Up from the floor, a pause half way after the low point was
+        scored, and on up: one lift, the whole way."""
+        lifting = Lifting(load_kg=5)
+        play(lifting, [(2, 0.10, 0.10), (2, 0.10, 0.70), (2, 0.70, 0.70),
+                       (1, 0.70, 0.45), (2, 0.45, 0.45), (1, 0.45, 0.10),
+                       (2, 0.10, 0.10)])
+        report = lifting.report()
+        starts = [lift.start.second for lift in report.lifts]
+        assert len(starts) == len(set(starts))
+        assert report.lifts[-1].d == pytest.approx(60, abs=6)
+
+    def test_one_hand_is_no_lift(self) -> None:
+        """One hand goes down to the floor and up, the other stays: not a
+        lift (NIOSH is for both hands, NTP 477)."""
+        lifting = Lifting(load_kg=5)
+        second = 0.0
+        for seconds, start, end in [(2, -0.30, -0.30), (2, -0.30, 0.70),
+                                    (2, 0.70, -0.30), (2, -0.30, -0.30)]:
+            steps = int(seconds * FPS)
+            for n in range(steps):
+                drop = start + (end - start) * n / max(steps - 1, 1)
+                body = reaching(0.30, -0.30)
+                lowered = reaching(0.30, drop)
+                for p in (Point.LEFT_WRIST, Point.LEFT_INDEX):
+                    body.points[p] = lowered.points[p]
+                lifting.add(body.skeleton(second))
+                second += 1 / FPS
+        assert lifting.report().lifts == []
+
+    def test_hands_coming_together_is_no_lift(self) -> None:
+        """Both hands rise from hanging apart to together at the waist
+        (crossing the arms, talking): not holding one thing."""
+        lifting = Lifting(load_kg=5)
+        second = 0.0
+        for seconds, start, end in [(2, 0.0, 0.0), (2, 0.0, 1.0),
+                                    (2, 1.0, 1.0), (2, 1.0, 0.0),
+                                    (2, 0.0, 0.0)]:
+            steps = int(seconds * FPS)
+            for n in range(steps):
+                share = start + (end - start) * n / max(steps - 1, 1)
+                body = reaching(0.30, 0.45 - 0.35 * share,
+                                apart=0.60 - 0.50 * share)
+                lifting.add(body.skeleton(second))
+                second += 1 / FPS
+        assert lifting.report().lifts == []
+
+    def test_next_to_a_push_is_no_lift(self) -> None:
+        """A lift right after a push (the hands coming off the cart) is
+        left out; one well apart from it is kept."""
+        lifting = Lifting(load_kg=5)
+        play(lifting, [(2, 0.70, 0.70), (2, 0.70, 0.10), (2, 0.10, 0.10),
+                       (2, 0.10, 0.70), (2, 0.70, 0.70)])
+        assert len(lifting.report().lifts) == 2
+        lifting.leave_out([(0.0, 1.5)], margin=1.5)
+        [kept] = lifting.report().lifts
+        assert kept.kind == "descenso"
+
+    def test_box_at_the_waist(self) -> None:
+        """A box lifted only to the waist (not clearly above the hanging
+        hands) still counts once per low point."""
+        lifting = Lifting(load_kg=5)
+        play(lifting, [(2, 0.05, 0.05), (2, 0.05, 0.75), (1, 0.75, 0.75),
+                       (2, 0.75, 0.05), (2, 0.05, 0.05)], apart=0.40)
+        assert len(lifting.report().lifts) == 1
 
     def test_small_movement_is_not_a_lift(self) -> None:
         """Less than 25 cm: not a lift."""

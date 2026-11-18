@@ -47,11 +47,14 @@ function markdown(text) {
       continue;
     }
     const bullet = line.match(/^[-*]\s+(.*)$/);
-    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+    const numbered = line.match(/^(\d+)[.)]\s+(.*)$/);
     if (bullet || numbered) {
       const kind = bullet ? "ul" : "ol";
-      if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
-      out.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+      // A numbered list cut by bullets goes on with the model's own
+      // number, not from 1 again.
+      const start = numbered && numbered[1] !== "1" ? ` start="${Number(numbered[1])}"` : "";
+      if (list !== kind) { closeList(); out.push(`<${kind}${start}>`); list = kind; }
+      out.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
       continue;
     }
     closeList();

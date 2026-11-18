@@ -10,7 +10,6 @@ for and a front camera can see:
 - the distance from the eyes to the screen (never under 30 cm);
 - the posture of the neck (REBA: more than 20° bent forward, bent
   backward, turned or tilted), held for more than a minute;
-- the shoulders raised above their usual height, held;
 - visual rests: looking away from the screen for 20 s at least every
   20 minutes (the guide's "20-20-20" rule);
 - short breaks away from the screen, for example every 30 minutes;
@@ -44,8 +43,11 @@ CLOSE_SHOULDERS = 0.28
 MIN_DISTANCE_CM = 30.0
 USUAL_DISTANCE_CM = (40.0, 75.0)
 # REBA (NTP 601): the neck scores more when bent forward more than 20°,
-# bent backward, turned or tilted to a side.
-NECK_FLEXION = 20.0
+# bent backward, turned or tilted to a side. The head is measured from
+# the camera, above the eyes: calibrated on 2026-11-18, looking at the
+# screen gave 8-19° (up to 22° leaning in) and the keyboard or a phone
+# 31-34°, so 25° separates them (20° of the neck plus the camera's).
+NECK_FLEXION = 25.0
 NECK_EXTENSION = 10.0
 NECK_TURN = 20.0
 NECK_TILT = 15.0
@@ -55,7 +57,14 @@ HELD = 60.0
 CLOSE_HELD = 10.0
 # The head turned this far, or no face with the person still there:
 # the eyes are away from the screen.
-AWAY_ANGLE = 30.0
+# Calibrated on 2026-11-18: turning to look about 45° aside measured 34°,
+# and a paper on the desk (not a rest: the eyes stay near) 28° of turn
+# with 25° down. Over 25° of turn, or the head this far down or up.
+AWAY_ANGLE = 25.0
+# Looking this far down (the keyboard, a phone, a paper on the desk) the
+# eyes stay near: it is not a visual rest, even with the head turned,
+# and the neck is measured there.
+NEAR_PITCH = 15.0
 # The guide's 20-20-20 rule: look away at least every 20 minutes for
 # at least 20 seconds.
 REST_SECONDS = 20.0
@@ -64,25 +73,28 @@ REST_EVERY = 20 * 60.0
 # posture. Nobody in front of the camera for this long is a break.
 BREAK_SECONDS = 30.0
 BREAK_EVERY = 30 * 60.0
-# The shoulders are raised when the ear-to-shoulder height is under
-# this share of the person's usual one (its median at the screen).
-SHRUG = 0.75
+# Raised shoulders are not measured: tried on 2026-11-18 with the front
+# camera, shrugging changed the ear-to-shoulder height and the height of
+# the shoulders in the image by 4-8 %, and leaning to the screen or
+# looking down changed them by 20-40 %; no reliable warning came of it.
 # The distance is only measured with the head this close to facing the
 # camera: looking down, the eyelids hide part of the iris and the
 # distance comes out longer (checked on a recording: 50 cm read as 59).
 FRONTAL = 20.0
-# A blink: the eyes this closed, then open again.
-BLINK_CLOSED = 0.5
-BLINK_OPEN = 0.3
+# A blink: the eyes this closed, then open again. Calibrated on
+# 2026-11-18: 10 of 10 deliberate blinks at any threshold; in a minute of
+# reading, 0.5 missed 4 quick or half blinks that were checked by eye on
+# the frames, 0.35 counted them.
+BLINK_CLOSED = 0.35
+BLINK_OPEN = 0.2
 
 Kind = Literal["too_close", "neck_flexed", "neck_extended", "neck_turned",
-               "shoulders_raised", "no_visual_rest", "no_break"]
+               "no_visual_rest", "no_break"]
 TITLES: dict[str, str] = {
     "too_close": "Pantalla demasiado cerca",
     "neck_flexed": "Cuello flexionado hacia la pantalla",
     "neck_extended": "Cuello en extensión (pantalla alta)",
     "neck_turned": "Cuello girado o inclinado",
-    "shoulders_raised": "Hombros elevados",
     "no_visual_rest": "Sin descanso visual",
     "no_break": "Sin pausa",
 }
@@ -138,7 +150,6 @@ class OfficeReport(BaseModel):
         seconds_neck_flexed: Time with the neck bent forward > 20°.
         seconds_neck_extended: Time with the neck bent backward.
         seconds_neck_turned: Time with the neck turned or tilted.
-        seconds_shoulders_raised: Time with the shoulders raised.
         blinks: Blinks counted.
         blinks_per_minute: Blinks per minute with the face measured.
         visual_rests: Looks away from the screen of 20 s or more.
@@ -160,7 +171,6 @@ class OfficeReport(BaseModel):
     seconds_neck_flexed: float = 0.0
     seconds_neck_extended: float = 0.0
     seconds_neck_turned: float = 0.0
-    seconds_shoulders_raised: float = 0.0
     blinks: int = 0
     blinks_per_minute: float | None = None
     visual_rests: int = 0
@@ -177,8 +187,9 @@ class OfficeReport(BaseModel):
         "Los ángulos del cuello son los de la cabeza vista desde la "
         "cámara; si la pantalla está muy por debajo de los ojos, mirarla "
         "ya inclina la cabeza.",
-        "Los hombros se comparan con la altura habitual de la propia "
-        "persona durante la sesión.",
+        "Los hombros elevados no se miden: con la cámara frontal no se "
+        "distinguen de forma fiable de acercarse a la pantalla o mirar "
+        "hacia abajo.",
         "El parpadeo es orientativo: la guía no fija una frecuencia "
         "mínima.",
     ]
@@ -241,7 +252,6 @@ class Office:
     _report: OfficeReport = field(default_factory=OfficeReport)
     _last: float | None = None
     _distances: list[float] = field(default_factory=list)
-    _shoulders: list[float] = field(default_factory=list)
     _closed: bool = False
     _away_since: float | None = None
     _absent_since: float | None = None
@@ -255,7 +265,6 @@ class Office:
         "neck_flexed": _Held("neck_flexed", HELD),
         "neck_extended": _Held("neck_extended", HELD),
         "neck_turned": _Held("neck_turned", HELD),
-        "shoulders_raised": _Held("shoulders_raised", HELD),
     })
 
     def see(self, second: float, skeleton: Skeleton | None) -> View | None:
@@ -303,8 +312,9 @@ class Office:
             self._absent_since = None
             report.seconds_at_screen += step
         # Visual rests: the eyes away from the screen for 20 s.
-        away = present and (face is None or abs(face.yaw) > AWAY_ANGLE
-                            or abs(face.pitch) > AWAY_ANGLE)
+        away = present and (
+            face is None or face.pitch < -AWAY_ANGLE
+            or (abs(face.yaw) > AWAY_ANGLE and face.pitch < NEAR_PITCH))
         if away:
             if self._away_since is None:
                 self._away_since = second
@@ -363,21 +373,12 @@ class Office:
                 report.blinks += 1
             elif face.blink <= BLINK_OPEN:
                 self._closed = False
-        # The shoulders, against the person's usual height.
-        raised = False
-        lift = self._shoulder_height(skeleton)
-        if lift is not None:
-            self._shoulders.append(lift)
-            usual = statistics.median(self._shoulders[-3000:])
-            raised = len(self._shoulders) > 50 and lift < SHRUG * usual
-            report.seconds_shoulders_raised += step if raised else 0.0
         checks = {
             "too_close": (close, MIN_DISTANCE_CM - distance),
             "neck_flexed": (flexed, face.pitch if face else 0.0),
             "neck_extended": (extended, -face.pitch if face else 0.0),
             "neck_turned": (turned, max(abs(face.yaw), abs(face.roll))
                             if face else 0.0),
-            "shoulders_raised": (raised, 0.0),
         }
         for kind, (on, measure) in checks.items():
             held = self._held[kind]
@@ -388,29 +389,10 @@ class Office:
         return ended
 
     @staticmethod
-    def _shoulder_height(skeleton: Skeleton | None) -> float | None:
-        """Ears above the shoulders, in shoulder widths (image)."""
-        if (skeleton is None or skeleton.pixels is None
-                or not skeleton.seen(Point.LEFT_EAR, Point.RIGHT_EAR,
-                                     Point.LEFT_SHOULDER,
-                                     Point.RIGHT_SHOULDER)):
-            return None
-        px = skeleton.pixels
-        width = abs(px[Point.LEFT_SHOULDER][0] - px[Point.RIGHT_SHOULDER][0])
-        if width <= 0:
-            return None
-        ears = (px[Point.LEFT_EAR][1] + px[Point.RIGHT_EAR][1]) / 2
-        shoulders = (px[Point.LEFT_SHOULDER][1]
-                     + px[Point.RIGHT_SHOULDER][1]) / 2
-        return float((shoulders - ears) / width)
-
-    @staticmethod
     def _detail(kind: str, worst: float) -> str:
         if kind == "too_close":
             return (f"a {MIN_DISTANCE_CM - worst:.0f} cm de la pantalla "
                     f"(mínimo {MIN_DISTANCE_CM:.0f} cm)")
-        if kind == "shoulders_raised":
-            return "hombros por encima de su altura habitual más de 1 min"
         return f"hasta {worst:.0f}° durante más de 1 min"
 
     def _event(self, kind: Kind, start: float, end: float,

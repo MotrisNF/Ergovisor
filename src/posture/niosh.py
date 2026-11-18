@@ -89,8 +89,11 @@ class Niosh:
         hm, vm, dm, am, fm, cm: The six factors, from 0 to 1.
         limit: The recommended weight limit (LPR), kg.
         index: The lifting index (IL): the load over the limit;
-            ``None`` without a load.
-        risk: What NTP 477 says of that index.
+            ``None`` without a load, or with a limit of 0 kg (any load
+            is too much: "el límite de peso recomendado será igual a
+            cero", NTP 477).
+        risk: What NTP 477 says of that index; with a limit of 0 kg, an
+            "incremento acusado del riesgo" whatever the load.
     """
 
     hm: float
@@ -176,10 +179,20 @@ def evaluate(h: float, v: float, d: float, a: float,
     for factor in factors:
         limit *= factor
     index = None
-    if load_kg is not None and load_kg > 0:
-        index = load_kg / limit if limit > 0 else float("inf")
+    if load_kg is not None and load_kg > 0 and limit > 0:
+        index = load_kg / limit
     hm, vm, dm, am, fm, cm = factors
+    risk = (risk_of(index) if index is not None
+            else risk_of(float("inf")) if limit <= 0 else "")
     return Niosh(hm=hm, vm=vm, dm=dm, am=am, fm=fm, cm=cm,
                  limit=round(limit, 2),
                  index=None if index is None else round(index, 2),
-                 risk=risk_of(index) if index is not None else "")
+                 risk=risk)
+
+
+# Why a factor is 0 (NTP 477), so the limit is 0 kg.
+ZERO_FACTORS = {"HM": f"la carga a más de {H_MAX:.0f} cm del cuerpo",
+                "VM": f"las manos a más de {V_MAX:.0f} cm del suelo",
+                "DM": f"un recorrido vertical de más de {D_MAX:.0f} cm",
+                "AM": f"un giro de más de {A_MAX:.0f}°",
+                "FM": "una frecuencia por encima de la tabla de la NTP 477"}

@@ -19,7 +19,7 @@ const POLL_MS = 1000;
 // How serious each screen-work warning is shown (REBA's colours).
 const OFFICE_LEVEL = {
   too_close: 3, neck_flexed: 2, neck_extended: 2, neck_turned: 2,
-  shoulders_raised: 2, no_visual_rest: 2, no_break: 2,
+  no_visual_rest: 2, no_break: 2,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -150,7 +150,9 @@ function tileHtml(s) {
         <span>Tiempo <b class="time">00:00.0</b></span>
         <span>Momentos de riesgo <b class="n-events">0</b></span>
         <span>Levantamientos <b class="n-lifts">0</b></span>
+        <span>Empujes y arrastres <b class="n-pushes">0</b></span>
         <span>Riesgo máx. <b class="max">—</b></span>
+        <span class="people-stat" hidden>Personas <b class="n-people">0</b></span>
       </div>
       <div class="stats office-stats" hidden></div>
       <p class="warning-line" hidden></p>
@@ -189,8 +191,16 @@ function updateTile(tile, s) {
   $(".time", el).textContent = clock(s.second);
   $(".n-events", el).textContent = s.events.length + s.office_events.length;
   $(".n-lifts", el).textContent = s.lifts.length;
+  $(".n-pushes", el).textContent = (s.pushes || []).length;
   const worst = s.events.reduce((m, e) => (e.level > (m?.level ?? -1) ? e : m), null);
   $(".max", el).innerHTML = worst ? badge(worst.level, `${LEVELS[worst.level]} · REBA ${worst.score}`) : "—";
+  // People in the picture now; shown once there has been more than one.
+  const persons = new Set([...s.events, ...s.lifts, ...(s.pushes || []), ...s.office_events]
+    .map(e => e.person || 1));
+  tile.several = tile.several || s.people > 1 || persons.size > 1;
+  $(".people-stat", el).hidden = !tile.several;
+  $(".n-people", el).textContent = s.people || 0;
+  const who = e => tile.several ? `<span class="tag">P${e.person || 1}</span>` : "";
   const warning = $(".warning-line", el);
   warning.hidden = !s.warnings.length;
   warning.textContent = s.warnings.at(-1) || "";
@@ -200,6 +210,7 @@ function updateTile(tile, s) {
   officeStats.hidden = !office;
   if (office) {
     officeStats.innerHTML = `
+      ${tile.several ? `<span>Pantalla <b>Persona ${office.person || 1}</b></span>` : ""}
       <span>Distancia <b>${office.distance_cm != null ? `${num(office.distance_cm, 0)} cm` : "—"}</b></span>
       <span>Cuello <b>${office.pitch != null ? `${num(office.pitch, 0)}°` : "—"}</b></span>
       <span>Parpadeo <b>${office.blinks_per_minute != null ? `${num(office.blinks_per_minute, 0)}/min` : "—"}</b></span>
@@ -210,9 +221,9 @@ function updateTile(tile, s) {
   if (tile.events !== total) {
     tile.events = total;
     const items = [
-      ...s.events.map(e => ({ start: e.start, html: `${badge(e.level, `REBA ${e.score}`)}
+      ...s.events.map(e => ({ start: e.start, html: `${who(e)}${badge(e.level, `REBA ${e.score}`)}
         <span class="causes">${esc(e.causes.join(", ") || "postura")}</span>` })),
-      ...s.office_events.map(e => ({ start: e.start, html: `${badge(OFFICE_LEVEL[e.kind] ?? 2, e.title)}
+      ...s.office_events.map(e => ({ start: e.start, html: `${who(e)}${badge(OFFICE_LEVEL[e.kind] ?? 2, e.title)}
         <span class="causes">${esc(e.detail)}</span>` })),
     ].sort((a, b) => a.start - b.start);
     $(".events", el).innerHTML = items.slice(-6).reverse()
@@ -264,6 +275,14 @@ async function pollSessions() {
       el.className = "tile";
       el.innerHTML = tileHtml(s);
       $(".close", el).addEventListener("click", () => closeSession(s.id));
+      // A click on the picture shows it full screen; another click (or
+      // Esc) goes back.
+      const video = $(".video", el);
+      video.title = "Clic para verla a pantalla completa";
+      video.addEventListener("click", () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (!$("img", video).hidden) video.requestFullscreen?.();
+      });
       $("#sessions").append(el);
       tile = { el, streaming: false, events: -1, findings: -1 };
       tiles.set(s.id, tile);
@@ -436,14 +455,15 @@ function renderReports() {
   $("#reports tbody").innerHTML = shown.map(r => `
     <tr class="link" data-name="${esc(r.name)}">
       <td>${esc(date(r.created))}</td>
-      <td class="source" title="${esc(niceSource(r.source))}">${esc(niceSource(r.source))}</td>
+      <td class="source" title="${esc(niceSource(r.source))}">${esc(niceSource(r.source))}${
+        r.people > 1 ? ` <span class="tag">${r.people} personas</span>` : ""}</td>
       <td class="num">${esc(duration(r.seconds))}</td>
       <td>${r.max_score ? badge(r.max_level, `${LEVELS[r.max_level]} · REBA ${r.max_score}`)
         : r.screen_warnings != null ? badge(r.screen_warnings ? 2 : 1, `Pantalla · ${r.screen_warnings} avisos`)
         : badge(0, "Sin datos")}</td>
       <td class="num">${r.events}</td>
       <td class="num">${r.lifts}</td>
-      <td class="num">${num(r.max_index, 2)}</td>
+      <td class="num">${maxIndex(r.max_index, r.beyond_limits)}</td>
       <td class="num">${r.topics != null ? `${r.topics} temas` : "—"}</td>
       <td class="actions">
         <button class="icon-button delete" type="button" title="Borrar el informe" aria-label="Borrar el informe">
@@ -515,7 +535,8 @@ function levelStack(summary) {
 
 function timeline(analysis) {
   const total = Math.max(analysis.summary.seconds || 0,
-    ...analysis.events.map(e => e.end), ...(analysis.lifting?.lifts || []).map(l => l.end.second), 1);
+    ...analysis.events.map(e => e.end), ...(analysis.lifting?.lifts || []).map(l => l.end.second),
+    ...(analysis.pushing?.pushes || []).map(p => p.end), 1);
   const width = 1000, left = 120, right = 16, plot = width - left - right;
   const x = s => left + (s / total) * plot;
   const step = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find(v => total / v <= 10) || 3600;
@@ -523,11 +544,18 @@ function timeline(analysis) {
   for (let t = 0; t <= total + 0.001; t += step) ticks.push(t);
   const lifts = analysis.lifting?.lifts || [];
   const color = l => `var(--lv${l})`;
-  const liftLevel = l => l.index == null ? 0 : l.index > 3 ? 4 : l.index > 1 ? 3 : 1;
+  const liftLevel = l => l.beyond_limits ? 4 : l.index == null ? 0 : l.index > 3 ? 4 : l.index > 1 ? 3 : 1;
+  const pushes = analysis.pushing?.pushes || [];
+  // A third track only when there were pushes or pulls.
+  const bottom = pushes.length ? 132 : 92;
   return `
-    <svg viewBox="0 0 ${width} 120" role="img" aria-label="Línea de tiempo de los momentos de riesgo y los levantamientos">
-      ${ticks.map(t => `<line class="grid-line" x1="${x(t)}" x2="${x(t)}" y1="10" y2="92"/>
-        <text class="axis" x="${x(t)}" y="110" text-anchor="middle">${clock(t).replace(/,\d$/, "")}</text>`).join("")}
+    <svg viewBox="0 0 ${width} ${bottom + 28}" role="img" aria-label="Línea de tiempo de los momentos de riesgo, los levantamientos y los empujes">
+      ${ticks.map(t => `<line class="grid-line" x1="${x(t)}" x2="${x(t)}" y1="10" y2="${bottom}"/>
+        <text class="axis" x="${x(t)}" y="${bottom + 18}" text-anchor="middle">${clock(t).replace(/,\d$/, "")}</text>`).join("")}
+      ${pushes.length ? `<text class="label" x="0" y="115">Empujes</text>
+      <rect class="track" x="${left}" y="98" width="${plot}" height="26" rx="3"/>
+      ${pushes.map(p => `<rect x="${x(p.start)}" y="98" width="${Math.max(3, x(p.end) - x(p.start))}" height="26"
+        rx="2" style="fill:${color(p.notes.length ? 2 : 1)}"><title>${clock(p.start)}–${clock(p.end)} · ${esc(p.kind)} de ${num(p.metres)} m${p.notes.length ? ": " + esc(p.notes.join("; ")) : ""}</title></rect>`).join("")}` : ""}
       <text class="label" x="0" y="35">Posturas (REBA)</text>
       <rect class="track" x="${left}" y="18" width="${plot}" height="26" rx="3"/>
       ${analysis.events.map(e => `<rect x="${x(e.start)}" y="18" width="${Math.max(2, x(e.end) - x(e.start))}" height="26"
@@ -535,11 +563,18 @@ function timeline(analysis) {
       <text class="label" x="0" y="75">Levantamientos</text>
       <rect class="track" x="${left}" y="58" width="${plot}" height="26" rx="3"/>
       ${lifts.map(l => `<rect x="${x(l.start.second)}" y="58" width="${Math.max(3, x(l.end.second) - x(l.start.second))}" height="26"
-        rx="2" style="fill:${color(liftLevel(l))}"><title>${clock(l.start.second)}–${clock(l.end.second)} · ${esc(l.kind)} · IL ${num(l.index, 2)} (${esc(l.risk)})</title></rect>`).join("")}
+        rx="2" style="fill:${color(liftLevel(l))}"><title>${clock(l.start.second)}–${clock(l.end.second)} · ${esc(l.kind)} · ${l.beyond_limits ? "LPR 0 kg" : `IL ${num(l.index, 2)}`} (${esc(l.risk || "sin carga indicada")})</title></rect>`).join("")}
     </svg>`;
 }
 
+// The highest lifting index; lifts with a limit of 0 kg have none and
+// are worse than any.
+function maxIndex(index, beyond) {
+  return beyond ? "LPR 0 kg" : num(index, 2);
+}
+
 function liftLevelBadge(lift) {
+  if (lift.beyond_limits) return badge(4, "LPR 0 kg · no aceptable con ninguna carga");
   if (lift.index == null) return badge(0, "Sin carga indicada");
   const level = lift.index > 3 ? 4 : lift.index > 1 ? 3 : 1;
   return badge(level, `IL ${num(lift.index, 2)} · ${lift.risk}`);
@@ -563,6 +598,27 @@ function regulationHtml(regulation) {
     </div>`).join("");
 }
 
+// The pushes and pulls of a report.
+function pushingHtml(p) {
+  const [initial, sustained] = p.force_limits_n;
+  const forces = p.force_initial_n || p.force_sustained_n
+    ? `Fuerza medida: inicial ${p.force_initial_n ? `${num(p.force_initial_n, 0)} N` : "—"}, mantenida ${p.force_sustained_n ? `${num(p.force_sustained_n, 0)} N` : "—"} (límites ${num(initial, 0)} N y ${num(sustained, 0)} N).`
+    : `Sin fuerza medida: no se puede comparar con los límites de la guía (${num(initial, 0)} N para iniciar, ${num(sustained, 0)} N para mantener).`;
+  return `<section class="card">
+      <h2>Empuje y tracción de cargas</h2>
+      <p class="muted">${esc(p.method)}. ${esc(forces)}</p>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Intervalo</th><th>Tipo</th><th class="num">Distancia</th><th class="num">Altura de las manos</th><th class="num">Tronco</th><th>Avisos</th></tr></thead>
+        <tbody>${p.pushes.map(x => `<tr>
+          <td><code>${clock(x.start)}–${clock(x.end)}</code></td><td>${esc(x.kind)}</td>
+          <td class="num">${num(x.metres)} m</td>
+          <td class="num">${num(x.hands_low_cm, 0)}–${num(x.hands_high_cm, 0)} cm</td>
+          <td class="num">${num(x.trunk, 0)}°</td><td>${esc(x.notes.join("; ") || "—")}</td></tr>`).join("")}
+        </tbody></table></div>
+      ${p.notes.length ? `<ul class="notes">${p.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+    </section>`;
+}
+
 // The screen work of a report: measures against the guide and warnings.
 function officeHtml(o) {
   const face = o.seconds_with_face || 0;
@@ -584,7 +640,6 @@ function officeHtml(o) {
         <div class="kpi"><small>Cuello en extensión, girado o inclinado</small>
           <div>${share(o.seconds_neck_extended + o.seconds_neck_turned)}</div>
           <small>Extensión ${esc(duration(o.seconds_neck_extended))} · giro ${esc(duration(o.seconds_neck_turned))}</small></div>
-        <div class="kpi"><small>Hombros elevados</small><div>${esc(duration(o.seconds_shoulders_raised))}</div></div>
         <div class="kpi"><small>Mayor tiempo sin descanso visual</small><div>${esc(duration(o.longest_without_rest))}</div>${restBadge}
           <small>${o.visual_rests} descansos de 20 s o más</small></div>
         <div class="kpi"><small>Mayor tiempo sin pausa</small><div>${esc(duration(o.longest_without_break))}</div>${breakBadge}
@@ -603,6 +658,96 @@ function officeHtml(o) {
     </section>`;
 }
 
+// Whether a person's body was scored (not only at a screen).
+function hasBody(p) {
+  return p.summary.frames_with_person > 0 || !p.office;
+}
+
+// One row per person, to compare them at a glance.
+function peopleTable(people) {
+  return `<section class="card">
+      <h2>Resumen por persona</h2>
+      <p class="muted">Cada persona se analiza por separado; el detalle de cada una está más abajo.</p>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Persona</th><th class="num">Tiempo</th><th>Riesgo postural máx.</th><th class="num">Momentos de riesgo</th>
+          <th class="num">Levantamientos</th><th class="num">IL máx.</th><th class="num">Empujes</th><th class="num">Avisos de pantalla</th></tr></thead>
+        <tbody>${people.map(p => {
+          const s = p.summary;
+          return `<tr>
+          <td><a href="#persona-${p.person}">Persona ${p.person}</a></td>
+          <td class="num">${esc(duration(Math.max(s.seconds || 0, p.office?.seconds_at_screen || 0)))}</td>
+          <td>${s.max_score ? badge(s.max_level, `${LEVELS[s.max_level]} · REBA ${s.max_score}`) : "—"}</td>
+          <td class="num">${p.events.length}</td>
+          <td class="num">${p.lifting?.lifts?.length || 0}</td>
+          <td class="num">${maxIndex(p.lifting?.max_index, p.lifting?.beyond_limits)}</td>
+          <td class="num">${p.pushing?.pushes?.length || 0}</td>
+          <td class="num">${p.office ? p.office.events.length : "—"}</td></tr>`;
+        }).join("")}
+        </tbody></table></div>
+    </section>`;
+}
+
+// What one person shows: before the detailed report (screen work, key
+// figures, levels and timeline) and after it (the tables).
+function personHtml(p) {
+  const s = p.summary;
+  const lifting = p.lifting;
+  const lifts = lifting?.lifts || [];
+  const worst = s.max_score ? badge(s.max_level, `${LEVELS[s.max_level]}`) : badge(0, "Sin datos");
+  const body = hasBody(p);
+  const top = `
+    ${p.office ? officeHtml(p.office) : ""}
+
+    ${body ? `<div class="kpis">
+      <div class="kpi"><small>Riesgo postural máximo</small><div>REBA ${s.max_score || "—"}</div>${worst}</div>
+      <div class="kpi"><small>Momentos de riesgo</small><div>${p.events.length}</div></div>
+      <div class="kpi"><small>Levantamientos y descensos</small><div>${lifts.length}</div>
+        ${lifting ? `<small>${num(lifting.lifts_per_minute)} por minuto</small>` : ""}</div>
+      <div class="kpi"><small>Índice de levantamiento máx.</small><div>${maxIndex(lifting?.max_index, lifting?.beyond_limits)}</div>
+        ${lifting?.beyond_limits ? `<small>${lifting.beyond_limits} con límite de 0 kg (fuera de la ecuación)</small>` : ""}
+        ${lifting?.load_kg ? `<small>Carga ${lifting.load_kg} kg</small>` : `<small>Sin carga indicada</small>`}</div>
+    </div>
+
+    <section class="card">
+      <h2>Tiempo en cada nivel de riesgo</h2>
+      <p class="muted">Nivel de acción REBA de cada instante con la persona visible de cuerpo entero (NTP 601).</p>
+      ${levelStack(s)}
+    </section>
+
+    <section class="card timeline">
+      <h2>Línea de tiempo</h2>
+      <p class="muted">Momentos de riesgo postural y levantamientos a lo largo del análisis. Pasa el ratón por encima para ver el detalle.</p>
+      ${timeline(p)}
+    </section>` : ""}`;
+  const bottom = `
+    ${body ? `<section class="card">
+      <h2>Momentos de riesgo postural</h2>
+      <p class="muted">Intervalos con nivel de acción REBA ${p.events.length ? "igual o superior al de alerta" : ""}.</p>
+      ${p.events.length ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Intervalo</th><th>Nivel</th><th class="num">REBA</th><th>Actuación</th><th>Causas</th></tr></thead>
+        <tbody>${p.events.map(e => `<tr>
+          <td><code>${clock(e.start)}–${clock(e.end)}</code></td><td>${badge(e.level)}</td>
+          <td class="num">${e.score}</td><td>${esc(e.action)}</td><td>${esc(e.causes.join(", ") || "—")}</td></tr>`).join("")}
+        </tbody></table></div>` : `<p class="muted">No hubo momentos de riesgo.</p>`}
+    </section>` : ""}
+
+    ${body && p.pushing ? pushingHtml(p.pushing) : ""}
+
+    ${body && lifting ? `<section class="card">
+      <h2>Levantamientos (ecuación de NIOSH)</h2>
+      <p class="muted">${esc(lifting.method)}.</p>
+      ${lifts.length ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Intervalo</th><th>Tipo</th><th class="num">Recorrido</th><th class="num">LPR</th><th>Índice</th><th>Avisos</th></tr></thead>
+        <tbody>${lifts.map(l => `<tr>
+          <td><code>${clock(l.start.second)}–${clock(l.end.second)}</code></td><td>${esc(l.kind)}</td>
+          <td class="num">${num(l.d, 0)} cm</td><td class="num">${num(l.limit)} kg</td>
+          <td>${liftLevelBadge(l)}</td><td>${esc(l.notes.join("; ") || "—")}</td></tr>`).join("")}
+        </tbody></table></div>` : `<p class="muted">No se detectaron levantamientos.</p>`}
+      ${lifting.notes.length ? `<ul class="notes">${lifting.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+    </section>` : ""}`;
+  return [top, bottom];
+}
+
 async function showReport(name) {
   const view = $("#view-informe");
   view.innerHTML = `<p class="muted">Cargando el informe…</p>`;
@@ -615,13 +760,33 @@ async function showReport(name) {
     return;
   }
   const a = data.analysis;
-  const s = a.summary;
-  const lifting = a.lifting;
-  const lifts = lifting?.lifts || [];
+  const people = a.people || [];
+  const several = people.length > 1;
   const source = niceSource(a.source);
-  const worst = s.max_score ? badge(s.max_level, `${LEVELS[s.max_level]}`) : badge(0, "Sin datos");
-  const seenShare = s.frames ? Math.round((s.frames_with_person / s.frames) * 100) : 0;
-  const body = s.frames_with_person > 0 || !a.office;
+  const seconds = Math.max(0, ...people.map(p => Math.max(p.summary.seconds || 0, p.office?.seconds_at_screen || 0)));
+  const atScreen = people.filter(p => p.office);
+  const anyBody = people.some(hasBody);
+  const lifting = people.find(p => p.lifting)?.lifting;
+  const pushing = people.find(p => p.pushing)?.pushing;
+  const office = atScreen[0]?.office;
+  let body;
+  if (!people.length) {
+    body = `<div class="empty"><h2>No se detectó a ninguna persona</h2>
+      <p class="muted">La cámara no vio a nadie el tiempo suficiente para analizarlo.</p></div>
+      <details class="card fold" id="written"></details>`;
+  } else if (!several) {
+    const [top, bottom] = personHtml(people[0]);
+    body = `${top}<details class="card fold" id="written"></details>${bottom}`;
+  } else {
+    body = `${peopleTable(people)}<details class="card fold" id="written"></details>
+      ${people.map(p => {
+        const [top, bottom] = personHtml(p);
+        return `<section class="person" id="persona-${p.person}">
+          <h2 class="person-title">Persona ${p.person}</h2>${top}${bottom}</section>`;
+      }).join("")}`;
+  }
+  const one = people.length === 1 ? people[0] : null;
+  const s = one?.summary;
   view.innerHTML = `
     <div class="crumbs">
       <a href="#/informes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Informes</a>
@@ -635,61 +800,15 @@ async function showReport(name) {
         <h1>${esc(source)}</h1>
         <div class="meta">
           <span>${esc(date(a.created))}</span>
-          <span>Duración analizada: ${esc(duration(Math.max(s.seconds, a.office?.seconds_at_screen || 0)))}</span>
-          ${body ? `<span>Cuerpo entero visible en el ${seenShare} % de los fotogramas</span>` : ""}
-          ${a.office ? `<span>Frente a la pantalla: ${esc(duration(a.office.seconds_at_screen))}</span>` : ""}
+          <span>Duración analizada: ${esc(duration(seconds))}</span>
+          ${several ? `<span>${people.length} personas, analizadas por separado</span>` : ""}
+          ${one && hasBody(one) ? `<span>Cuerpo entero visible en el ${s.frames ? Math.round((s.frames_with_person / s.frames) * 100) : 0} % de los fotogramas</span>` : ""}
+          ${one?.office ? `<span>Frente a la pantalla: ${esc(duration(one.office.seconds_at_screen))}</span>` : ""}
         </div>
       </div>
     </div>
 
-    ${a.office ? officeHtml(a.office) : ""}
-
-    ${body ? `<div class="kpis">
-      <div class="kpi"><small>Riesgo postural máximo</small><div>REBA ${s.max_score || "—"}</div>${worst}</div>
-      <div class="kpi"><small>Momentos de riesgo</small><div>${a.events.length}</div></div>
-      <div class="kpi"><small>Levantamientos y descensos</small><div>${lifts.length}</div>
-        ${lifting ? `<small>${num(lifting.lifts_per_minute)} por minuto</small>` : ""}</div>
-      <div class="kpi"><small>Índice de levantamiento máx.</small><div>${num(lifting?.max_index, 2)}</div>
-        ${lifting?.load_kg ? `<small>Carga ${lifting.load_kg} kg</small>` : `<small>Sin carga indicada</small>`}</div>
-    </div>
-
-    <section class="card">
-      <h2>Tiempo en cada nivel de riesgo</h2>
-      <p class="muted">Nivel de acción REBA de cada instante con la persona visible (NTP 601).</p>
-      ${levelStack(s)}
-    </section>
-
-    <section class="card timeline">
-      <h2>Línea de tiempo</h2>
-      <p class="muted">Momentos de riesgo postural y levantamientos a lo largo del análisis. Pasa el ratón por encima para ver el detalle.</p>
-      ${timeline(a)}
-    </section>` : ""}
-
-    <details class="card fold" id="written"></details>
-
-    ${body ? `<section class="card">
-      <h2>Momentos de riesgo postural</h2>
-      <p class="muted">Intervalos con nivel de acción REBA ${a.events.length ? "igual o superior al de alerta" : ""}.</p>
-      ${a.events.length ? `<div class="table-wrap"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Nivel</th><th class="num">REBA</th><th>Actuación</th><th>Causas</th></tr></thead>
-        <tbody>${a.events.map(e => `<tr>
-          <td><code>${clock(e.start)}–${clock(e.end)}</code></td><td>${badge(e.level)}</td>
-          <td class="num">${e.score}</td><td>${esc(e.action)}</td><td>${esc(e.causes.join(", ") || "—")}</td></tr>`).join("")}
-        </tbody></table></div>` : `<p class="muted">No hubo momentos de riesgo.</p>`}
-    </section>` : ""}
-
-    ${body && lifting ? `<section class="card">
-      <h2>Levantamientos (ecuación de NIOSH)</h2>
-      <p class="muted">${esc(lifting.method)}.</p>
-      ${lifts.length ? `<div class="table-wrap"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Tipo</th><th class="num">Recorrido</th><th class="num">LPR</th><th>Índice</th><th>Avisos</th></tr></thead>
-        <tbody>${lifts.map(l => `<tr>
-          <td><code>${clock(l.start.second)}–${clock(l.end.second)}</code></td><td>${esc(l.kind)}</td>
-          <td class="num">${num(l.d, 0)} cm</td><td class="num">${num(l.limit)} kg</td>
-          <td>${liftLevelBadge(l)}</td><td>${esc(l.notes.join("; ") || "—")}</td></tr>`).join("")}
-        </tbody></table></div>` : `<p class="muted">No se detectaron levantamientos.</p>`}
-      ${lifting.notes.length ? `<ul class="notes">${lifting.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
-    </section>` : ""}
+    ${body}
 
     <section class="card">
       <h2>Normativa aplicable</h2>
@@ -700,11 +819,13 @@ async function showReport(name) {
     <section class="card">
       <h2>Método, supuestos y limitaciones</h2>
       <ul class="notes">
-        ${body ? `<li>${esc(a.method)}.</li>
+        ${several ? `<li>Cada persona se analiza por separado y se numera por su posición en la imagen, sin reconocerla: si una persona sale del plano y entra otra, puede heredar su número.</li>` : ""}
+        ${anyBody ? `<li>${esc(a.method)}.</li>
         <li>Aspectos que el esqueleto no permite medir y no se puntúan: ${esc(a.unmeasured.join(", "))}.</li>
-        ${(lifting?.assumptions || []).map(n => `<li>${esc(n)}</li>`).join("")}` : ""}
-        ${a.office ? `<li>${esc(a.office.method)}.</li>
-        ${a.office.assumptions.map(n => `<li>${esc(n)}</li>`).join("")}` : ""}
+        ${(lifting?.assumptions || []).map(n => `<li>${esc(n)}</li>`).join("")}
+        ${(pushing?.assumptions || []).map(n => `<li>${esc(n)}</li>`).join("")}` : ""}
+        ${office ? `<li>${esc(office.method)}.</li>
+        ${office.assumptions.map(n => `<li>${esc(n)}</li>`).join("")}` : ""}
       </ul>
     </section>`;
   $("#print").addEventListener("click", () => printDocument("report", name));
@@ -923,6 +1044,19 @@ setupAdd();
 setupReports();
 setupSummaries();
 window.addEventListener("hashchange", route);
+// Enter in a field of a dialog does what its main button does. Without
+// this the browser presses the form's first submit button, the close
+// one: pasting an address and pressing Enter closed the dialog.
+for (const [form, main] of [["#add-form", "#add-submit"], ["#summary-form", "#summary-submit"]]) {
+  $(form).addEventListener("keydown", event => {
+    const field = event.target.closest("input, select");
+    if (event.key !== "Enter" || !field || event.isComposing) return;
+    event.preventDefault();
+    const button = $(main);
+    if (!button.disabled) button.click();
+  });
+}
+
 // A folded section would not be printed: unfold it while printing.
 let foldedForPrint = [];
 window.addEventListener("beforeprint", () => {
