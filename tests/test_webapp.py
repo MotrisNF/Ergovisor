@@ -378,3 +378,17 @@ class TestRecording:
             "kind": "address", "source": "http://a/v"}).json()
         assert other["recording"] is None
         sessions.shutdown(1)
+
+
+class TestScreenWork:
+    """The work at a screen is only analysed when the app is started
+    with it (``app --screen``): by default, only the body."""
+
+    def test_off_by_default(self, tmp_path: Path) -> None:
+        app = WebApp(manager([]), str(tmp_path), str(tmp_path), "")
+        assert not app._config("camera", "0", "x", "full").screen
+
+    def test_on_when_asked(self, tmp_path: Path) -> None:
+        app = WebApp(manager([]), str(tmp_path), str(tmp_path), "",
+                     screen=True)
+        assert app._config("camera", "0", "x", "full").screen

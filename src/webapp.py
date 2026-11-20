@@ -159,7 +159,8 @@ class WebApp:
                  upload_directory: str = "data/uploads",
                  regulation_dir: str = "data/processed/prl",
                  model: Model = "full", llm: Llm | None = None,
-                 llm_model: str = "", record: bool = False) -> None:
+                 llm_model: str = "", record: bool = False,
+                 screen: bool = False) -> None:
         """Set up the routes; nothing is analysed or written yet.
 
         Args:
@@ -176,9 +177,12 @@ class WebApp:
             llm_model: The name of that model, kept with each document.
             record: Whether cameras may be recorded (``app --record``);
                 off by default, so nobody can record from the interface.
+            screen: Whether the work at a screen is analysed too (``app
+                --screen``); off by default: only the body.
         """
         self.sessions = sessions
         self._record = record
+        self._screen = screen
         self._llm = llm
         self._llm_model = llm_model
         # One document written at a time: a second click does not spend
@@ -249,7 +253,7 @@ class WebApp:
                              model=model,
                              regulation_dir=self._regulation_dir,
                              save_directory=str(self._reports),
-                             record=record)
+                             record=record, screen=self._screen)
 
     def add_source(self, new: NewSource) -> SessionView:
         """Start analysing a camera of this computer or an address."""

@@ -51,13 +51,16 @@ serve:
 # make app LLM=hydrogen
 # Recording the cameras' original video is off unless RECORD=1 (for
 # calibration videos): make app RECORD=1
+# The work at a screen (distance, neck, blinks, rests, breaks) is only
+# analysed with SCREEN=1; by default only the body: make app SCREEN=1
 # Options for `app`: APP_ARGS="--port 8080 --limit 2 --model full"
 LLM      ?= lite
 RECORD   ?= 0
+SCREEN   ?= 0
 APP_ARGS ?=
 
 app:
-	@uv run -m src app --llm $(LLM) $(if $(filter 1,$(RECORD)),--record) $(APP_ARGS)
+	@uv run -m src app --llm $(LLM) $(if $(filter 1,$(RECORD)),--record) $(if $(filter 1,$(SCREEN)),--screen) $(APP_ARGS)
 
 # Each rule keeps its own mypy cache: the cache is only valid for the
 # flags that built it, so sharing one made every switch between lint and

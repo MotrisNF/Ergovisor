@@ -29,7 +29,7 @@ What is measured, and with which method:
 | Postures | REBA (NTP 601, INSST) | Trunk, neck, arms and legs, frame by frame; moments of risk with their causes |
 | Lifting and lowering loads | Revised NIOSH equation (NTP 477) and INSST guide (2024) | Each two-handed lift: heights, distances, twist, frequency; the weight limit and, with the load given, the lifting index |
 | Pushing and pulling | INSST guide (2024), ISO/TR 12295 force limits | Each two-handed push or pull: distance, hand height, trunk posture |
-| Screen work | RD 488/1997 and its INSST guide (2021) | Eye-screen distance, neck posture, blinks, visual rests (20-20-20) and breaks |
+| Screen work (only with `SCREEN=1` / `--screen`) | RD 488/1997 and its INSST guide (2021) | Eye-screen distance, neck posture, blinks, visual rests (20-20-20) and breaks |
 
 How it works:
 
@@ -40,8 +40,9 @@ How it works:
    image. Up to 3 people per camera (`MAX_PEOPLE` in
    `src/posture/people.py`; `analyze --people N`).
 2. **Measures.** Each person is analysed apart: REBA, lifts, pushes, and,
-   when the camera is a laptop's (face and shoulders, no hips), the
-   screen work with MediaPipe's face model.
+   when asked for (`make app SCREEN=1`, `analyze --screen`) and the
+   camera is a laptop's (face and shoulders, no hips), the screen work
+   with MediaPipe's face model.
 3. **Regulation.** Each kind of risk is searched in an index of the
    prevention corpus (`data/raw/prl/`: Law 31/1995, RD 487/1997,
    RD 488/1997, the INSST guides on manual handling and screens, NTP 477
@@ -91,6 +92,7 @@ time they are used and kept in `~/.cache/rag-posture/`.
 $ make app                 # http://127.0.0.1:8000, this computer only
 $ make app LLM=hydrogen    # the best written report (about a minute)
 $ make app RECORD=1        # allow recording the cameras' original video
+$ make app SCREEN=1        # also analyse the work at a screen
 ```
 
 Add a camera, an IP address or a video; up to four at once, each in the

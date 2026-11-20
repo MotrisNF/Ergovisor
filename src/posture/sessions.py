@@ -51,6 +51,9 @@ class SessionConfig(BaseModel):
         save_directory: Where the reports are written.
         record: For a camera or an address, a video file where its
             original picture is kept; empty: nothing is recorded.
+        screen: Also analyse the work at a screen (distance, neck,
+            blinks, visual rests, breaks) when the camera is a laptop's;
+            off, only the body is analysed (postures, lifts, pushes).
     """
 
     kind: Kind
@@ -62,6 +65,7 @@ class SessionConfig(BaseModel):
     k: int = 3
     save_directory: str = "data/output/posture"
     record: str = ""
+    screen: bool = False
 
 
 def report_name(config: SessionConfig, started: datetime) -> str:
@@ -159,8 +163,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
             live = LiveRegulation(
                 BM25Index.load(Path(config.regulation_dir)), config.k)
         estimator = PoseEstimator(config.model, people=MAX_PEOPLE)
-        faces = FaceEstimator(people=MAX_PEOPLE)
-        office = Office()
+        if config.screen:
+            faces = FaceEstimator(people=MAX_PEOPLE)
+        office = Office() if config.screen else None
         told = [0.0]
         overlay = Overlay()
         lifting = Lifting()

@@ -905,7 +905,8 @@ class RagCLI:
             retriever: RetrieverMode = "bm25",
             k: Annotated[int, Field(gt=0)] = 3,
             save_directory: Annotated[
-                str, Field(min_length=1)] = "data/output/posture"
+                str, Field(min_length=1)] = "data/output/posture",
+            screen: bool = False
             ) -> None:
         """Score the postures of the people working, with REBA.
 
@@ -964,6 +965,9 @@ class RagCLI:
             retriever: ``bm25`` or ``hybrid``, for that search.
             k: Passages per kind of risk, each from a different document.
             save_directory: Folder where the analysis JSON is written.
+            screen: Also analyse the work at a screen (eye-screen
+                distance, neck, blinks, visual rests and breaks) when the
+                camera is a laptop's; off, only the body.
         """
         from .posture.analysis import (analyse, describe, describe_lift,
                                        describe_office, describe_push,
@@ -1021,7 +1025,7 @@ class RagCLI:
         estimator = PoseEstimator(model, people=people)
         # The face model is only used when the camera sees a person
         # seated at the screen (the hips out of the picture).
-        faces = FaceEstimator(people=people)
+        faces = FaceEstimator(people=people) if screen else None
         started = datetime.now()
         progress = tqdm(desc="Analysing", unit="frame", file=sys.stderr)
 
@@ -1062,13 +1066,15 @@ class RagCLI:
                 interruptible=bool(camera),
                 on_result=draw if drawing is not None else None,
                 lifting=lifting,
-                on_lift=on_lift, office=Office(), faces=faces,
+                on_lift=on_lift, office=Office() if screen else None,
+                faces=faces,
                 on_office=on_office, pushing=pushing, on_push=on_push,
                 max_people=people)
         finally:
             progress.close()
             estimator.close()
-            faces.close()
+            if faces is not None:
+                faces.close()
             if drawing is not None:
                 drawing.close()
         if not result.people:
@@ -1093,13 +1099,13 @@ class RagCLI:
                 print(f"  {len(seen.pushing.pushes)} pushes and pulls",
                       file=sys.stderr)
             if seen.office is not None:
-                screen = seen.office
-                distance = (f", usual distance {screen.distance_cm:.0f} cm"
-                            if screen.distance_cm is not None else "")
-                print(f"  At a screen {screen.seconds_at_screen:.0f} s"
-                      f"{distance}, {sum(w.times for w in screen.warnings)} "
+                desk = seen.office
+                distance = (f", usual distance {desk.distance_cm:.0f} cm"
+                            if desk.distance_cm is not None else "")
+                print(f"  At a screen {desk.seconds_at_screen:.0f} s"
+                      f"{distance}, {sum(w.times for w in desk.warnings)} "
                       "warnings, "
-                      f"{screen.blinks} blinks", file=sys.stderr)
+                      f"{desk.blinks} blinks", file=sys.stderr)
         # A camera session is named by its day and a number (never its
         # time), so a new session never overwrites the previous one.
         stem = (Path(video).stem if video
@@ -1205,7 +1211,8 @@ class RagCLI:
             upload_directory: Annotated[
                 str, Field(min_length=1)] = "data/uploads",
             llm: Literal["lite", "flash", "hydrogen"] = "lite",
-            record: bool = False
+            record: bool = False,
+            screen: bool = False
             ) -> None:
         """Open the graphical interface: a page on this computer to
         analyse cameras and videos and read the reports, until Ctrl+C.
@@ -1237,6 +1244,10 @@ class RagCLI:
                 ``upload_directory`` (for calibration). Off by default:
                 without it the interface offers no recording and refuses
                 it.
+            screen: Also analyse the work at a screen (eye-screen
+                distance, neck, blinks, visual rests and breaks) when a
+                camera is a laptop's. Off by default: only the body
+                (postures, lifts, pushes and pulls).
         """
         import uvicorn
         from .posture.sessions import SessionManager
@@ -1250,12 +1261,14 @@ class RagCLI:
                            "--regulation_dir ''.")
         web = WebApp(SessionManager(limit), save_directory,
                      upload_directory, regulation_dir, model,
-                     gemini(MODELS[llm]), MODELS[llm], record)
+                     gemini(MODELS[llm]), MODELS[llm], record, screen)
         print(f"Interface: http://127.0.0.1:{port} (reports written "
               f"with {MODELS[llm]})", file=sys.stderr)
         if record:
             print(f"Recording allowed: videos go to '{upload_directory}'",
                   file=sys.stderr)
+        if screen:
+            print("Screen work analysed too", file=sys.stderr)
         uvicorn.run(web.app, host="127.0.0.1", port=port)
 
     @CliCommand.validated
