@@ -4,20 +4,22 @@ It reads any source of frames (a file or a camera) one frame at a time
 and calls ``on_event`` as soon as a moment of risk ends: printed for a
 recording, it would be a warning for a live camera.
 """
+from collections import deque
 from collections.abc import Callable, Iterable
 import copy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 
 from .angles import Angles, measure
 from .face import Face, FaceEstimator
-from .lifting import Lift, Lifting, LiftingReport
+from .lifting import BodyHeights, Lift, Lifting, LiftingReport
 from .office import Office, OfficeEvent, OfficeReport, OfficeState
-from .people import MAX_PEOPLE, MIN_SECONDS, Tracker
+from .people import MAX_PEOPLE, MIN_SECONDS, Tracker, box
 from .pose import PoseEstimator
 from .pushing import Push, Pushing, PushingReport
 from .reba import Reba, Task
@@ -64,6 +66,21 @@ NEAR_PUSH = 1.5
 # A face is a person's when it is this close (share of the image) to
 # their nose.
 FACE_NEAR = 0.15
+# Ours: a person is near enough to measure their body when, standing, they
+# fill at least this share of the image's height: the tallest they were
+# seen whole in the last ``TALL_SECONDS`` (bending down for a lift, they
+# are smaller for a moment). Further, the pose model's error is as big
+# as the movements measured: people chatting at the end of a corridor
+# (0.31 of the image) gave 14 lifts and 12 moments of risk in 35 minutes;
+# the people of the calibration videos filled 0.54-0.97 standing (the
+# median of each, 2026-11-18).
+NEAR_ENOUGH = 0.4
+TALL_SECONDS = 10.0
+# Ours: a trunk bent further than this (degrees from vertical) is not a
+# posture but the model's error (171° in a session at a laptop, REBA 10,
+# 2026-11-20): bending to the floor with straight knees, the trunk is at
+# about 110-130°.
+TRUNK_MAX = 135.0
 
 METHOD = ("REBA (Rapid Entire Body Assessment), según la NTP 601 del INSST "
           "(Hignett y McAtamney)")
@@ -71,14 +88,40 @@ UNMEASURED = ["hombro elevado", "brazo apoyado", "rotación del brazo",
               "torsión o desviación de muñeca"]
 
 
+class RiskCount(BaseModel):
+    """How often one cause of risk was seen (no times are kept: see
+    ``PersonAnalysis``).
+
+    Attributes:
+        cause: What it was, as the bands of NTP 601 ("tronco flexionado
+            más de 60°").
+        times: In how many moments of risk.
+        seconds: Their time in all.
+        max_score: The highest REBA score of those moments.
+    """
+
+    cause: str
+    times: int
+    seconds: float
+    max_score: int
+
+
 class PersonAnalysis(BaseModel):
     """What the analysis found of one person.
+
+    Only how often and how long things happened is kept, never when
+    (the minute of a session, with its date, would tell who it was):
+    the reports are anonymous, as the data protection rules (RGPD) ask
+    of measures of people at work.
 
     Attributes:
         person: Their number in the recording (see ``people``).
         seconds_seen: How long they were in the picture.
         summary: Time at each level, the highest score...
-        events: The moments of risk, in order.
+        moments: How many moments of risk (REBA at or above the alert
+            level).
+        moments_by_level: Of them, how many at each action level.
+        risks: Each cause of those moments, most frequent first.
         lifting: The lifts and lowerings scored with the NIOSH equation,
             or ``None`` when not analysed.
         office: The work at a screen, when the camera was the screen's
@@ -90,7 +133,9 @@ class PersonAnalysis(BaseModel):
     person: int = 1
     seconds_seen: float = 0.0
     summary: Summary
-    events: list[Event]
+    moments: int = 0
+    moments_by_level: dict[int, int] = {}
+    risks: list[RiskCount] = []
     lifting: LiftingReport | None = None
     office: OfficeReport | None = None
     pushing: PushingReport | None = None
@@ -101,7 +146,8 @@ class Analysis(BaseModel):
 
     Attributes:
         source: The video file or the camera.
-        created: When the analysis was made (UTC).
+        created: The day of the analysis (local date, ``YYYY-MM-DD``;
+            not the time, see ``PersonAnalysis``).
         method: The method and where it is described.
         task: The load and the grip given for the task.
         unmeasured: What the method asks that a skeleton cannot show:
@@ -119,27 +165,26 @@ class Analysis(BaseModel):
     max_people: int = 1
     people: list[PersonAnalysis] = []
 
-    @model_validator(mode="before")
-    @classmethod
-    def _one_person(cls, data: Any) -> Any:
-        """An analysis saved before there were several people."""
-        if isinstance(data, dict) and "people" not in data:
-            return {**data, "people": people_of(data)}
-        return data
-
 
 def people_of(analysis: dict[str, Any]) -> list[dict[str, Any]]:
-    """The people of a saved analysis (a JSON object), also of one saved
-    before there were several: its only person."""
-    if "people" in analysis:
-        return list(analysis["people"])
-    if "summary" not in analysis:
-        return []
-    return [{"person": 1, "summary": analysis["summary"],
-             "events": analysis.get("events", []),
-             "lifting": analysis.get("lifting"),
-             "office": analysis.get("office"),
-             "pushing": analysis.get("pushing")}]
+    """The people of a saved analysis (a JSON object)."""
+    return list(analysis.get("people", []))
+
+
+def count_risks(events: list[Event]) -> list[RiskCount]:
+    """How often and how long each cause was seen in some moments of
+    risk, most frequent first (then longest)."""
+    found: dict[str, RiskCount] = {}
+    for event in events:
+        for cause in dict.fromkeys(event.kinds):
+            count = found.setdefault(cause, RiskCount(
+                cause=cause, times=0, seconds=0.0, max_score=0))
+            count.times += 1
+            count.seconds += event.end - event.start
+            count.max_score = max(count.max_score, event.score)
+    for count in found.values():
+        count.seconds = round(count.seconds, 1)
+    return sorted(found.values(), key=lambda c: (-c.times, -c.seconds))
 
 
 def whole_body(skeleton: Skeleton | None) -> bool:
@@ -196,6 +241,9 @@ class _Person:
     pushing: Pushing | None
     smoother: Smoother = field(default_factory=Smoother)
     events: list[Event] = field(default_factory=list)
+    # When they were seen whole and how tall (share of the image).
+    tall: deque[tuple[float, float]] = field(default_factory=deque)
+    heights: BodyHeights = field(default_factory=BodyHeights)
     seconds_seen: float = 0.0
     last_seen: float | None = None
 
@@ -206,15 +254,40 @@ class _Person:
                                      1.0)
         self.last_seen = second
 
+    def near(self, skeleton: Skeleton | None) -> bool:
+        """Whether the whole body is seen, near enough to measure it
+        (see ``NEAR_ENOUGH``), with the head no higher than a person's
+        (``BodyHeights.add``: the floor made up). A stature too short is
+        not checked here: seated, or coming into the picture, a person
+        is shorter (the lifts check it, see ``Lifting``)."""
+        if not whole_body(skeleton):
+            return False
+        assert skeleton is not None
+        if not self.heights.add(skeleton):
+            return False
+        place = box(skeleton)
+        if place is None:
+            return False
+        self.tall.append((skeleton.timestamp,
+                          min(place[3], 1.0) - max(place[1], 0.0)))
+        while skeleton.timestamp - self.tall[0][0] > TALL_SECONDS:
+            self.tall.popleft()
+        return max(height for _, height in self.tall) >= NEAR_ENOUGH
+
     def report(self) -> PersonAnalysis:
         if self.lifting is not None and self.pushing is not None:
             self.lifting.leave_out([(p.start, p.end)
-                                    for p in self.pushing.pushes],
-                                   NEAR_PUSH)
+                                    for p in self.pushing.pushes
+                                    if p.start is not None
+                                    and p.end is not None], NEAR_PUSH)
         return PersonAnalysis(
             person=self.number, seconds_seen=round(self.seconds_seen, 1),
             summary=self.timeline.summary,
-            events=self.events,
+            moments=len(self.events),
+            moments_by_level={
+                level: sum(1 for e in self.events if e.level == level)
+                for level in sorted({e.level for e in self.events})},
+            risks=count_risks(self.events),
             lifting=self.lifting.report() if self.lifting else None,
             office=self.office.report() if self.office else None,
             pushing=self.pushing.report() if self.pushing else None)
@@ -333,8 +406,10 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
             # Up from the screen (the whole body seen): away from it,
             # as if gone, so standing up is a break.
             tell(who, who.office.add(frame.timestamp, None, None))
-        # The body is only scored when it is seen whole.
-        body = not desk and whole_body(skeleton)
+        # The body is only scored when it is seen whole, near enough, in a
+        # posture a person can take.
+        body = (not desk and who.near(skeleton) and angles is not None
+                and angles.trunk <= TRUNK_MAX)
         result, ended = who.timeline.add(frame.timestamp,
                                          angles if body else None)
         keep(who, ended)
@@ -350,10 +425,11 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
         if skeleton is None:
             return None
         recent = None
-        if who.lifting is not None and who.lifting.lifts and (
-                frame.timestamp - who.lifting.lifts[-1].end.second
-                <= LIFT_SHOWN):
-            recent = who.lifting.lifts[-1]
+        if who.lifting is not None and who.lifting.lifts:
+            lift_end = who.lifting.lifts[-1].end.second
+            if (lift_end is not None
+                    and frame.timestamp - lift_end <= LIFT_SHOWN):
+                recent = who.lifting.lifts[-1]
         return Seen(who.number, skeleton, angles if body else None,
                     result if body else None, who.timeline.current,
                     recent, state)
@@ -398,13 +474,26 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
         if who.pushing is not None:
             push_ended(who, who.pushing.finish())
     return Analysis(
-        source=source, created=datetime.now(timezone.utc).isoformat(
-            timespec="seconds"),
+        source=source, created=date.today().isoformat(),
         task={"load_kg": task.load_kg, "sudden": task.sudden,
               "coupling": task.coupling},
         max_people=max_people,
         people=numbered([who.report() for _, who in sorted(people.items())
                          if who.seen]))
+
+
+def free_name(folder: Path, stem: str, suffix: str = ".json",
+              number: bool = False) -> str:
+    """The first name ``stem`` (or ``stem_2``, ``stem_3``...; always
+    numbered from ``stem_1`` with ``number``) with no ``suffix`` file in
+    ``folder``. Sessions are named by their day and this number, never
+    by their time (see ``PersonAnalysis``)."""
+    n = 1
+    while True:
+        name = f"{stem}_{n}" if number or n > 1 else stem
+        if not (folder / f"{name}{suffix}").exists():
+            return name
+        n += 1
 
 
 def numbered(people: list[PersonAnalysis]) -> list[PersonAnalysis]:
@@ -415,37 +504,39 @@ def numbered(people: list[PersonAnalysis]) -> list[PersonAnalysis]:
             for number, person in enumerate(people, start=1)]
 
 
-def describe_lift(lift: Lift) -> str:
-    """One line for a lift: when, how much, its limit and its index."""
+def _span(start: float | None, end: float | None) -> str:
+    """``[mm:ss–mm:ss] `` while analysing; nothing once it is not kept."""
+    if start is None or end is None:
+        return ""
+
     def clock(second: float) -> str:
         return f"{int(second // 60):02d}:{second % 60:04.1f}"
 
+    return f"[{clock(start)}–{clock(end)}] "
+
+
+def describe_lift(lift: Lift) -> str:
+    """One line for a lift: when, how much, its limit and its index."""
     index = (f", IL {lift.index:.2f} ({lift.risk.lower()})"
              if lift.index is not None
              else f" ({lift.risk.lower()})" if lift.beyond_limits else "")
     notes = f". {'; '.join(lift.notes)}" if lift.notes else ""
-    return (f"[{clock(lift.start.second)}–{clock(lift.end.second)}] "
+    return (f"{_span(lift.start.second, lift.end.second)}"
             f"{lift.kind.capitalize()} de {lift.d:.0f} cm: LPR "
             f"{lift.limit:.1f} kg{index}{notes}")
 
 
 def describe(event: Event) -> str:
     """One line for a moment of risk: when, how much and why."""
-    def clock(second: float) -> str:
-        return f"{int(second // 60):02d}:{second % 60:04.1f}"
-
-    return (f"[{clock(event.start)}–{clock(event.end)}] Riesgo "
+    return (f"{_span(event.start, event.end)}Riesgo "
             f"{event.risk.lower()} (REBA {event.score}, nivel "
             f"{event.level}): {', '.join(event.causes) or 'postura'}")
 
 
 def describe_push(push: Push) -> str:
     """One line for a push or a pull."""
-    def clock(second: float) -> str:
-        return f"{int(second // 60):02d}:{second % 60:04.1f}"
-
     notes = f". {'; '.join(push.notes)}" if push.notes else ""
-    return (f"[{clock(push.start)}–{clock(push.end)}] "
+    return (f"{_span(push.start, push.end)}"
             f"{push.kind.capitalize()} de {push.metres:.1f} m, manos a "
             f"{push.hands_low_cm:.0f}–{push.hands_high_cm:.0f} cm del "
             f"suelo{notes}")
@@ -453,8 +544,5 @@ def describe_push(push: Push) -> str:
 
 def describe_office(event: OfficeEvent) -> str:
     """One line for a warning of the screen work."""
-    def clock(second: float) -> str:
-        return f"{int(second // 60):02d}:{second % 60:04.1f}"
-
-    return (f"[{clock(event.start)}–{clock(event.end)}] {event.title}: "
+    return (f"{_span(event.start, event.end)}{event.title}: "
             f"{event.detail}")

@@ -21,8 +21,13 @@ from src.posture.sessions import (Kind, SessionConfig, SessionManager,
 from src import webapp
 from src.webapp import WebApp
 
+# A moment of risk as a live session sends it (with its times: they are
+# only shown while it runs, never saved).
 EVENT = {"start": 1.0, "end": 4.0, "score": 9, "level": 3, "risk": "Alto",
          "action": "Necesaria pronto", "causes": ["tronco flexionado 60°"]}
+# How a saved report counts it.
+RISK = {"cause": "tronco flexionado 20-60°", "times": 1, "seconds": 3.0,
+        "max_score": 9}
 
 
 def fake_launcher(script: list[tuple[str, Any]], hold: bool = False) -> Any:
@@ -152,9 +157,14 @@ class TestSessionManager:
 class TestReportName:
     """Report names never overwrite each other."""
 
-    def test_camera(self) -> None:
+    def test_camera(self, tmp_path: Path) -> None:
+        """A camera: its day and a number, never its time (RGPD)."""
+        camera = SessionConfig(kind="camera", source="0", label="x",
+                               save_directory=str(tmp_path))
         when = datetime(2026, 11, 17, 20, 40, 57)
-        assert report_name(config(), when) == "camera_2026-11-17_20-40-57"
+        assert report_name(camera, when) == "camera_2026-11-17_1"
+        (tmp_path / "camera_2026-11-17_1.json").write_text("{}")
+        assert report_name(camera, when) == "camera_2026-11-17_2"
 
     def test_video(self, tmp_path: Path) -> None:
         video = SessionConfig(kind="video", source="up/obra.mp4", label="x",
@@ -162,7 +172,7 @@ class TestReportName:
         when = datetime(2026, 11, 17, 9, 0, 0)
         assert report_name(video, when) == "obra"
         (tmp_path / "obra.json").write_text("{}")
-        assert report_name(video, when) == "obra_2026-11-17_09-00-00"
+        assert report_name(video, when) == "obra_2"
 
 
 class TestDevices:
@@ -186,9 +196,11 @@ class TestDevices:
 def write_report(folder: Path, name: str, created: str,
                  regulation: bool = True) -> None:
     analysis = {
-        "source": f"camera {name}", "created": created,
-        "summary": {"seconds": 12.0, "max_score": 9, "max_level": 3},
-        "events": [EVENT], "lifting": {"lifts": [{}], "max_index": 1.4}}
+        "source": f"camera {name}", "created": created, "people": [{
+            "person": 1,
+            "summary": {"seconds": 12.0, "max_score": 9, "max_level": 3},
+            "moments": 1, "risks": [RISK],
+            "lifting": {"lifts": [{}], "max_index": 1.4}}]}
     (folder / f"{name}.json").write_text(json.dumps(analysis))
     if regulation:
         (folder / f"{name}_regulation.json").write_text(
@@ -236,10 +248,10 @@ class TestApi:
         people = [
             {"person": 1, "summary": {"seconds": 30.0, "max_score": 5,
                                       "max_level": 2},
-             "events": [EVENT], "lifting": {"lifts": [{}], "max_index": 0.8}},
+             "moments": 1, "lifting": {"lifts": [{}], "max_index": 0.8}},
             {"person": 2, "summary": {"seconds": 12.0, "max_score": 9,
                                       "max_level": 3},
-             "events": [EVENT, EVENT],
+             "moments": 2,
              "lifting": {"lifts": [{}, {}], "max_index": 1.6}}]
         (tmp_path / "reports" / "two.json").write_text(json.dumps(
             {"source": "camera two", "created": "2026-11-18",
@@ -250,13 +262,20 @@ class TestApi:
         assert (got["events"], got["lifts"]) == (3, 3)
         assert got["max_index"] == 1.6
 
-    def test_old_report_has_its_person(self, client: TestClient,
-                                       tmp_path: Path) -> None:
-        """A report saved before there were several people is served
-        with its only person."""
-        write_report(tmp_path / "reports", "a", "2026-11-17T10:00:00+00:00")
-        [person] = client.get("/api/reports/a").json()["analysis"]["people"]
-        assert person["person"] == 1 and person["events"] == [EVENT]
+    def test_same_day_in_order(self, client: TestClient,
+                               tmp_path: Path) -> None:
+        """Reports keep only their day: those of one day go by their
+        number, the newest first (10 after 9)."""
+        folder = tmp_path / "reports"
+        for n in (1, 9, 10):
+            write_report(folder, f"camera_2026-11-17_{n}", "2026-11-17")
+        write_report(folder, "camera_2026-11-18_1", "2026-11-18")
+        got = [r["name"] for r in client.get("/api/reports").json()]
+        assert got == ["camera_2026-11-18_1", "camera_2026-11-17_10",
+                       "camera_2026-11-17_9", "camera_2026-11-17_1"]
+        [person] = client.get("/api/reports/camera_2026-11-17_1").json()[
+            "analysis"]["people"]
+        assert person["risks"] == [RISK]
 
     def test_report_and_delete(self, client: TestClient,
                                tmp_path: Path) -> None:

@@ -16,7 +16,7 @@ Two kinds of document:
   Labour Inspectorate (``write_summary``).
 """
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -28,6 +28,9 @@ from pydantic import BaseModel
 
 from ..exceptions import RagError
 from .analysis import people_of
+from .assessment import (assess, assessment_table, data_table,
+                         methods_table)
+from .regulation import duration
 
 # The models with the most quota for this project's key. Compared on
 # 2026-11-17 with the same analysis: ``lite`` in 7 s, sound but close to
@@ -54,8 +57,10 @@ RETRY_WAITS = (5.0, 15.0)
 PASSAGE_CHARS = 2000
 # Passages given to the model, at most (the most cited topics first).
 MAX_PASSAGES = 30
-# Moments of risk listed one by one, at most (the worst first).
+# Causes of risk listed one by one, at most (the most frequent first).
 MAX_EVENTS = 25
+# A decimal number written with a point: 2.5.
+DECIMAL = re.compile(r"(?<![\w.])(\d+)\.(\d+)(?![\w.])")
 CITATION = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 # A call to the model: (system instructions, prompt) -> text.
 Llm = Callable[[str, str], str]
@@ -88,7 +93,7 @@ class Written(BaseModel):
         kind: ``report`` (one analysis) or ``summary`` (a period).
         title: Its title.
         model: The model that wrote it.
-        created: When (local time, ISO).
+        created: The day it was written (``YYYY-MM-DD``; not the time).
         markdown: The text, with the references added at the end.
         sources: The passages it cites, by number.
         uncited: Numbers it cited that were not given (removed from the
@@ -157,7 +162,24 @@ sustituye a la evaluación por personal técnico competente) no llevan \
 cita: no están en las fuentes.
 10. No exageres los datos: usa sus mismos términos (si dicen "cuello en \
 extensión", no escribas "hiperextensión"; si dicen "inclinado", no \
-escribas "severamente flexionado")."""
+escribas "severamente flexionado").
+11. La valoración de cada riesgo (nivel, prioridad y plazo) ya está \
+calculada con la escala de cada método en la TABLA DE VALORACIÓN: \
+cópiala tal cual y no cambies ningún nivel ni prioridad; tu trabajo es \
+explicarla y justificarla con los datos y las citas.
+12. Las medidas preventivas deben ser concretas y responder a las causas \
+medidas (por ejemplo, tronco flexionado más de 60° al coger del suelo: \
+elevar el origen de la carga a la altura de los nudillos), cada una \
+ligada a un riesgo de la tabla, con la prioridad y el plazo de ese \
+riesgo. Ordénalas según los principios de la acción preventiva: evitar \
+el riesgo, combatirlo en su origen, adaptar el puesto a la persona, \
+medidas organizativas, y formación e información. Sin medidas \
+genéricas que no respondan a un dato. Cuando la prioridad sea \
+"Pendiente de datos", la medida es obtener el dato que falta (pesar la \
+carga, medir la fuerza con un dinamómetro, indicar la duración).
+13. Los datos son anónimos: las personas son "Persona 1", "Persona 2"... \
+y solo se sabe cuántas veces ocurrió cada cosa y cuánto duró en total, \
+no cuándo. No intentes situarlo en el tiempo ni identificar a nadie."""
 
 
 def document_name(file_path: str) -> str:
@@ -166,12 +188,18 @@ def document_name(file_path: str) -> str:
     return next((title for part, title in DOCUMENTS if part in name), name)
 
 
-def _clock(second: float) -> str:
-    return f"{int(second // 60):02d}:{second % 60:04.1f}"
-
-
 def _percent(part: float, whole: float) -> str:
     return f"{100 * part / whole:.0f} %" if whole else "—"
+
+
+def _by_level(analysis: dict[str, Any], names: list[str]) -> str:
+    """`` (2 de riesgo alto; 1 de riesgo medio)``, or nothing."""
+    counts = analysis.get("moments_by_level") or {}
+    if not counts:
+        return ""
+    return " (" + "; ".join(
+        f"{count} de riesgo {names[int(level)]}" for level, count in
+        sorted(counts.items(), key=lambda item: -int(item[0]))) + ")"
 
 
 def describe_analysis(analysis: dict[str, Any]) -> str:
@@ -196,7 +224,8 @@ def describe_analysis(analysis: dict[str, Any]) -> str:
         for person in people:
             lines += ["", f"# Persona {person.get('person', 1)}"]
             lines += _describe_person(person, unmeasured)
-    return "\n".join(lines)
+    # Spanish writes decimals with a comma (the model copies them).
+    return DECIMAL.sub(r"\1,\2", "\n".join(lines))
 
 
 def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
@@ -204,7 +233,6 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
     """One person's analysis in words and numbers."""
     lines: list[str] = []
     summary = analysis.get("summary", {})
-    events = analysis.get("events", [])
     office = analysis.get("office")
     if summary.get("frames_with_person"):
         levels = summary.get("seconds_by_level", {})
@@ -220,21 +248,26 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
             "NTP 601)",
             f"Duración analizada con la persona de cuerpo entero: "
             f"{summary.get('seconds', 0):.0f} s.",
-            f"Puntuación REBA máxima: {summary.get('max_score', 0)} "
-            f"(nivel de acción {summary.get('max_level', 0)}).",
+            f"Puntuación REBA máxima de un solo instante: "
+            f"{summary.get('max_score', 0)} (nivel de acción "
+            f"{summary.get('max_level', 0)}); un instante no es un momento "
+            "de riesgo: la valoración se hace con los momentos.",
             "Tiempo en cada nivel de riesgo: " + "; ".join(
                 f"{names[int(level)]} {_percent(seconds, total)}"
                 for level, seconds in sorted(levels.items())) + ".",
             f"Momentos de riesgo (nivel de acción de alerta o superior): "
-            f"{len(events)}.",
+            f"{analysis.get('moments', 0)}{_by_level(analysis, names)}.",
         ]
-        worst = sorted(events, key=lambda e: -e["score"])[:MAX_EVENTS]
-        for event in sorted(worst, key=lambda e: e["start"]):
+        risks = analysis.get("risks", [])
+        if risks:
+            lines.append("Causas de esos momentos (cuántas veces y cuánto "
+                         "tiempo en total; no se guarda cuándo):")
+        for risk in risks[:MAX_EVENTS]:
             lines.append(
-                f"- {_clock(event['start'])}–{_clock(event['end'])}: REBA "
-                f"{event['score']}, riesgo {event['risk'].lower()}, "
-                f"actuación {event['action'].lower()}; causas: "
-                f"{', '.join(event['causes']) or 'postura'}.")
+                f"- {risk['cause']}: {risk['times']} "
+                f"{'vez' if risk['times'] == 1 else 'veces'}, "
+                f"{duration(risk['seconds'])} en total, REBA máximo "
+                f"{risk['max_score']}.")
         if unmeasured:
             lines.append("Aspectos de REBA no medibles con el esqueleto "
                          f"(no puntuados): {', '.join(unmeasured)}.")
@@ -261,12 +294,15 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
         for lift in lifting["lifts"]:
             index = (f"IL {lift['index']:.2f} ({lift['risk']})"
                      if lift.get("index") is not None
-                     else f"sin índice: el límite es 0 kg, no aceptable con "
-                          f"ninguna carga ({lift['risk']})"
+                     else "sin índice: el límite es 0 kg, ninguna carga "
+                          "es aceptable en esas condiciones"
+                          + (f" ({lift['risk']})" if lift.get("risk")
+                             else " (sin carga indicada no se asigna un "
+                                  "nivel de riesgo)")
                      if lift.get("beyond_limits")
                      else "sin índice (carga no indicada)")
             lines.append(
-                f"- {_clock(lift['start']['second'])}: {lift['kind']} de "
+                f"- {lift['kind'].capitalize()} de "
                 f"{lift['d']:.0f} cm, límite de peso recomendado "
                 f"{lift['limit']:.1f} kg, {index}; avisos: "
                 f"{'; '.join(lift['notes']) or 'ninguno'}.")
@@ -284,8 +320,8 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
         ]
         for push in pushing["pushes"]:
             lines.append(
-                f"- {_clock(push['start'])}–{_clock(push['end'])}: "
-                f"{push['kind']} de {push['metres']:.1f} m; manos entre "
+                f"- {push['kind'].capitalize()} de {push['metres']:.1f} m "
+                f"({push.get('seconds', 0):.0f} s); manos entre "
                 f"{push['hands_low_cm']:.0f} y {push['hands_high_cm']:.0f} "
                 f"cm del suelo; tronco hasta {push['trunk']:.0f}°, giro "
                 f"hasta {push['twist']:.0f}°; avisos: "
@@ -335,10 +371,11 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
                 "permite valorar si las pausas son suficientes"
                 + (" ni los descansos visuales (cada 20 min)"
                    if office["seconds_at_screen"] < 20 * 60 else "") + ".")
-        for event in office.get("events", []):
-            lines.append(f"- Aviso {_clock(event['start'])}–"
-                         f"{_clock(event['end'])}: {event['title']}, "
-                         f"{event['detail']}.")
+        for warning in office.get("warnings", []):
+            lines.append(f"- Aviso: {warning['title']}, "
+                         f"{warning['times']} "
+                         f"{'vez' if warning['times'] == 1 else 'veces'}, "
+                         f"{duration(warning['seconds'])} en total.")
         lines += [f"Supuesto: {note}" for note in office["assumptions"]]
     return lines
 
@@ -468,7 +505,7 @@ def _finish(kind: Literal["report", "summary"], title: str, model: str,
     if cited:
         markdown += "\n" + _references(sources, cited)
     return Written(kind=kind, title=title, model=model,
-                   created=datetime.now().isoformat(timespec="seconds"),
+                   created=date.today().isoformat(),
                    markdown=markdown,
                    sources=[s for s, _ in sources if s.number in cited],
                    uncited=unknown, reports=reports)
@@ -485,16 +522,49 @@ subsección (###) por persona ("Persona 1", "Persona 2"...) y al final un \
 resumen conjunto; las medidas preventivas, comunes, indicando a qué \
 persona se refieren cuando sea solo a alguna.
 """ if people > 1 else "")
-    return f"""Redacta el informe detallado de evaluación de este puesto de \
-trabajo, a partir del análisis automático por vídeo que sigue.
+    table = assessment_table(assess(analysis))
+    return f"""Redacta el informe de evaluación ergonómica de este puesto \
+de trabajo, a partir del análisis automático por vídeo que sigue. Debe \
+recoger lo que exige la documentación de una evaluación de riesgos \
+(puesto, riesgos, trabajadores afectados, resultado, medidas y métodos) \
+y ser útil para planificar la actividad preventiva.
 {several}
-Estructura (omite las secciones de riesgos que no se hayan analizado):
-## 1. Objeto y alcance
-## 2. Metodología
-## 3. Resultados
-## 4. Valoración del riesgo
-## 5. Medidas preventivas propuestas (ordenadas por prioridad)
-## 6. Limitaciones del análisis
+Estructura:
+## 1. Datos de la evaluación
+Copia la TABLA DE DATOS sin cambios.
+## 2. Objeto y alcance
+Breve: qué riesgos ergonómicos se evalúan y cuáles no.
+## 3. Metodología y criterios de valoración
+Copia la TABLA DE MÉTODOS sin cambiar su contenido; añade en la columna \
+de referencia las citas de los pasajes que los describen.
+## 4. Resultados
+Por tipo de riesgo analizado (omite los no analizados), con tablas de \
+los datos clave.
+## 5. Valoración del riesgo y conclusiones
+Copia la TABLA DE VALORACIÓN tal cual y, debajo, una conclusión breve \
+por riesgo que diga por qué tiene ese nivel, con citas.
+## 6. Medidas preventivas y planificación
+Una tabla: n.º, medida, riesgo que corrige, tipo (técnica, \
+organizativa o formación), prioridad, plazo orientativo, cómo \
+comprobar su eficacia. Al menos una medida por cada causa de la TABLA \
+DE VALORACIÓN (no una sola por riesgo), más la formación e información \
+de las personas. Ordenadas por prioridad. Si alguna prioridad es \
+"Inmediata", indica también la medida provisional. Añade que los plazos \
+son orientativos y los fija la empresa al planificar.
+## 7. Limitaciones del análisis
+Separa lo medido por el sistema, lo indicado por el usuario y lo \
+supuesto; lo que el método no puede medir con un esqueleto.
+## 8. Seguimiento
+Cuándo y cómo reevaluar tras aplicar las medidas.
+
+# TABLA DE DATOS (cópiala sin cambios)
+{data_table(analysis)}
+
+# TABLA DE MÉTODOS (cópiala; añade las citas)
+{methods_table(analysis) or "Ningún método aplicado."}
+
+# TABLA DE VALORACIÓN (calculada; cópiala sin cambios)
+{table or "No se encontró ningún riesgo que valorar."}
 
 # DATOS DEL ANÁLISIS
 {describe_analysis(analysis)}
@@ -509,7 +579,9 @@ def summary_prompt(analyses: list[tuple[str, dict[str, Any]]],
                    end: str) -> str:
     """What the model is asked for the summary of a period."""
     blocks = "\n\n".join(
-        f"### Análisis {number}: {name}\n{describe_analysis(analysis)}"
+        f"### Análisis {number}: {name}\n{describe_analysis(analysis)}\n"
+        f"Valoración calculada (no cambies sus niveles ni prioridades):\n"
+        f"{assessment_table(assess(analysis)) or 'ningún riesgo'}"
         for number, (name, analysis) in enumerate(analyses, start=1))
     return f"""Redacta un informe resumen de las evaluaciones automáticas \
 de puestos de trabajo realizadas entre {start} y {end}, dirigido a la \
@@ -524,7 +596,8 @@ Estructura:
 ## 3. Metodología
 ## 4. Resultados agregados (incluye una tabla con una fila por análisis)
 ## 5. Riesgos principales y recurrentes
-## 6. Medidas preventivas recomendadas y prioridades
+## 6. Medidas preventivas recomendadas y prioridades (las de la \
+valoración calculada de cada análisis; plazos orientativos)
 ## 7. Limitaciones
 
 # ANÁLISIS DEL PERIODO ({len(analyses)})
@@ -546,7 +619,7 @@ def write_report(name: str, analysis: dict[str, Any],
     sources = collect_sources([regulation], read)
     text = llm(SYSTEM, report_prompt(analysis, sources))
     source = str(analysis.get("source", name)).removeprefix("camera ")
-    title = f"Informe detallado de evaluación: {Path(source).name}"
+    title = f"Informe de evaluación ergonómica: {Path(source).name}"
     return _finish("report", title, model, text, sources, [name])
 
 

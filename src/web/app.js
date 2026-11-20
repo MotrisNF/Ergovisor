@@ -46,6 +46,9 @@ function duration(seconds) {
 
 function date(iso) {
   if (!iso) return "—";
+  // Reports keep only their day (no time).
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (day) return `${day[3]}/${day[2]}/${day[1]}`;
   const d = new Date(iso);
   return isNaN(d) ? iso : d.toLocaleString("es-ES", {
     day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
@@ -533,38 +536,24 @@ function levelStack(summary) {
     </div>`;
 }
 
-function timeline(analysis) {
-  const total = Math.max(analysis.summary.seconds || 0,
-    ...analysis.events.map(e => e.end), ...(analysis.lifting?.lifts || []).map(l => l.end.second),
-    ...(analysis.pushing?.pushes || []).map(p => p.end), 1);
-  const width = 1000, left = 120, right = 16, plot = width - left - right;
-  const x = s => left + (s / total) * plot;
-  const step = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find(v => total / v <= 10) || 3600;
-  const ticks = [];
-  for (let t = 0; t <= total + 0.001; t += step) ticks.push(t);
-  const lifts = analysis.lifting?.lifts || [];
-  const color = l => `var(--lv${l})`;
-  const liftLevel = l => l.beyond_limits ? 4 : l.index == null ? 0 : l.index > 3 ? 4 : l.index > 1 ? 3 : 1;
-  const pushes = analysis.pushing?.pushes || [];
-  // A third track only when there were pushes or pulls.
-  const bottom = pushes.length ? 132 : 92;
-  return `
-    <svg viewBox="0 0 ${width} ${bottom + 28}" role="img" aria-label="Línea de tiempo de los momentos de riesgo, los levantamientos y los empujes">
-      ${ticks.map(t => `<line class="grid-line" x1="${x(t)}" x2="${x(t)}" y1="10" y2="${bottom}"/>
-        <text class="axis" x="${x(t)}" y="${bottom + 18}" text-anchor="middle">${clock(t).replace(/,\d$/, "")}</text>`).join("")}
-      ${pushes.length ? `<text class="label" x="0" y="115">Empujes</text>
-      <rect class="track" x="${left}" y="98" width="${plot}" height="26" rx="3"/>
-      ${pushes.map(p => `<rect x="${x(p.start)}" y="98" width="${Math.max(3, x(p.end) - x(p.start))}" height="26"
-        rx="2" style="fill:${color(p.notes.length ? 2 : 1)}"><title>${clock(p.start)}–${clock(p.end)} · ${esc(p.kind)} de ${num(p.metres)} m${p.notes.length ? ": " + esc(p.notes.join("; ")) : ""}</title></rect>`).join("")}` : ""}
-      <text class="label" x="0" y="35">Posturas (REBA)</text>
-      <rect class="track" x="${left}" y="18" width="${plot}" height="26" rx="3"/>
-      ${analysis.events.map(e => `<rect x="${x(e.start)}" y="18" width="${Math.max(2, x(e.end) - x(e.start))}" height="26"
-        rx="2" style="fill:${color(e.level)}"><title>${clock(e.start)}–${clock(e.end)} · REBA ${e.score} (${LEVELS[e.level]}): ${esc(e.causes.join(", "))}</title></rect>`).join("")}
-      <text class="label" x="0" y="75">Levantamientos</text>
-      <rect class="track" x="${left}" y="58" width="${plot}" height="26" rx="3"/>
-      ${lifts.map(l => `<rect x="${x(l.start.second)}" y="58" width="${Math.max(3, x(l.end.second) - x(l.start.second))}" height="26"
-        rx="2" style="fill:${color(liftLevel(l))}"><title>${clock(l.start.second)}–${clock(l.end.second)} · ${esc(l.kind)} · ${l.beyond_limits ? "LPR 0 kg" : `IL ${num(l.index, 2)}`} (${esc(l.risk || "sin carga indicada")})</title></rect>`).join("")}
-    </svg>`;
+// The causes of the moments of risk: how often and how long, never when
+// (the reports keep no times, for the data protection rules).
+function risksHtml(p) {
+  const byLevel = p.moments_by_level || {};
+  const levels = Object.keys(byLevel).map(Number).sort((a, b) => b - a);
+  return `${levels.length ? `<p>${levels.map(l => `${badge(l)} ${byLevel[l]} ${byLevel[l] === 1 ? "momento" : "momentos"}`).join(" ")}</p>` : ""}
+    ${(p.risks || []).length ? `<div class="table-wrap"><table class="table">
+      <thead><tr><th>Causa</th><th class="num">Veces</th><th class="num">Tiempo en total</th><th>REBA máx.</th></tr></thead>
+      <tbody>${p.risks.map(r => `<tr>
+        <td>${esc(r.cause)}</td><td class="num">${r.times}</td>
+        <td class="num">${esc(duration(r.seconds))}</td>
+        <td>${badge(levelOf(r.max_score), `REBA ${r.max_score}`)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="muted">No hubo momentos de riesgo.</p>`}`;
+}
+
+// NTP 601: the action level of a REBA score.
+function levelOf(score) {
+  return score <= 1 ? 0 : score <= 3 ? 1 : score <= 7 ? 2 : score <= 10 ? 3 : 4;
 }
 
 // The highest lifting index; lifts with a limit of 0 kg have none and
@@ -574,7 +563,10 @@ function maxIndex(index, beyond) {
 }
 
 function liftLevelBadge(lift) {
-  if (lift.beyond_limits) return badge(4, "LPR 0 kg · no aceptable con ninguna carga");
+  // Without a load given there is no risk to name (NTP 477 reads it from
+  // the index): a warning, not the highest level.
+  if (lift.beyond_limits) return lift.risk ? badge(4, `LPR 0 kg · ${lift.risk}`)
+    : badge(2, "LPR 0 kg · ninguna carga aceptable así");
   if (lift.index == null) return badge(0, "Sin carga indicada");
   const level = lift.index > 3 ? 4 : lift.index > 1 ? 3 : 1;
   return badge(level, `IL ${num(lift.index, 2)} · ${lift.risk}`);
@@ -587,7 +579,7 @@ function regulationHtml(regulation) {
   if (!regulation.findings.length) return `<p class="muted">No hubo riesgos que buscar en la normativa.</p>`;
   return regulation.findings.map(f => `
     <div class="finding">
-      <h3>${esc(f.title)} <span class="tag">${f.seen.length} ${f.seen.length === 1 ? "vez" : "veces"}</span></h3>
+      <h3>${esc(f.title)}</h3>
       <p class="seen">${esc(f.seen.slice(0, 3).join(" · "))}${f.seen.length > 3 ? " …" : ""}</p>
       ${f.passages.map(p => `
         <blockquote class="passage">
@@ -608,9 +600,9 @@ function pushingHtml(p) {
       <h2>Empuje y tracción de cargas</h2>
       <p class="muted">${esc(p.method)}. ${esc(forces)}</p>
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Tipo</th><th class="num">Distancia</th><th class="num">Altura de las manos</th><th class="num">Tronco</th><th>Avisos</th></tr></thead>
+        <thead><tr><th>Tipo</th><th class="num">Duración</th><th class="num">Distancia</th><th class="num">Altura de las manos</th><th class="num">Tronco</th><th>Avisos</th></tr></thead>
         <tbody>${p.pushes.map(x => `<tr>
-          <td><code>${clock(x.start)}–${clock(x.end)}</code></td><td>${esc(x.kind)}</td>
+          <td>${esc(x.kind)}</td><td class="num">${esc(duration(x.seconds))}</td>
           <td class="num">${num(x.metres)} m</td>
           <td class="num">${num(x.hands_low_cm, 0)}–${num(x.hands_high_cm, 0)} cm</td>
           <td class="num">${num(x.trunk, 0)}°</td><td>${esc(x.notes.join("; ") || "—")}</td></tr>`).join("")}
@@ -649,11 +641,11 @@ function officeHtml(o) {
           <small>${o.blinks} parpadeos; la guía no fija un mínimo</small></div>
       </div>
       <h3 style="margin-top:18px">Avisos</h3>
-      ${o.events.length ? `<div class="table-wrap" style="margin-top:8px"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Aviso</th><th>Detalle</th></tr></thead>
-        <tbody>${o.events.map(e => `<tr>
-          <td><code>${clock(e.start)}–${clock(e.end)}</code></td>
-          <td>${badge(OFFICE_LEVEL[e.kind] ?? 2, e.title)}</td><td>${esc(e.detail)}</td></tr>`).join("")}
+      ${(o.warnings || []).length ? `<div class="table-wrap" style="margin-top:8px"><table class="table">
+        <thead><tr><th>Aviso</th><th class="num">Veces</th><th class="num">Tiempo en total</th></tr></thead>
+        <tbody>${o.warnings.map(w => `<tr>
+          <td>${badge(OFFICE_LEVEL[w.kind] ?? 2, w.title)}</td><td class="num">${w.times}</td>
+          <td class="num">${esc(duration(w.seconds))}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">Ningún aviso: la distancia, el cuello, los descansos y las pausas estuvieron dentro de los criterios.</p>`}
     </section>`;
 }
@@ -677,18 +669,18 @@ function peopleTable(people) {
           <td><a href="#persona-${p.person}">Persona ${p.person}</a></td>
           <td class="num">${esc(duration(Math.max(s.seconds || 0, p.office?.seconds_at_screen || 0)))}</td>
           <td>${s.max_score ? badge(s.max_level, `${LEVELS[s.max_level]} · REBA ${s.max_score}`) : "—"}</td>
-          <td class="num">${p.events.length}</td>
+          <td class="num">${p.moments || 0}</td>
           <td class="num">${p.lifting?.lifts?.length || 0}</td>
           <td class="num">${maxIndex(p.lifting?.max_index, p.lifting?.beyond_limits)}</td>
           <td class="num">${p.pushing?.pushes?.length || 0}</td>
-          <td class="num">${p.office ? p.office.events.length : "—"}</td></tr>`;
+          <td class="num">${p.office ? (p.office.warnings || []).reduce((n, w) => n + w.times, 0) : "—"}</td></tr>`;
         }).join("")}
         </tbody></table></div>
     </section>`;
 }
 
 // What one person shows: before the detailed report (screen work, key
-// figures, levels and timeline) and after it (the tables).
+// figures and levels) and after it (the tables).
 function personHtml(p) {
   const s = p.summary;
   const lifting = p.lifting;
@@ -700,7 +692,7 @@ function personHtml(p) {
 
     ${body ? `<div class="kpis">
       <div class="kpi"><small>Riesgo postural máximo</small><div>REBA ${s.max_score || "—"}</div>${worst}</div>
-      <div class="kpi"><small>Momentos de riesgo</small><div>${p.events.length}</div></div>
+      <div class="kpi"><small>Momentos de riesgo</small><div>${p.moments || 0}</div></div>
       <div class="kpi"><small>Levantamientos y descensos</small><div>${lifts.length}</div>
         ${lifting ? `<small>${num(lifting.lifts_per_minute)} por minuto</small>` : ""}</div>
       <div class="kpi"><small>Índice de levantamiento máx.</small><div>${maxIndex(lifting?.max_index, lifting?.beyond_limits)}</div>
@@ -712,23 +704,12 @@ function personHtml(p) {
       <h2>Tiempo en cada nivel de riesgo</h2>
       <p class="muted">Nivel de acción REBA de cada instante con la persona visible de cuerpo entero (NTP 601).</p>
       ${levelStack(s)}
-    </section>
-
-    <section class="card timeline">
-      <h2>Línea de tiempo</h2>
-      <p class="muted">Momentos de riesgo postural y levantamientos a lo largo del análisis. Pasa el ratón por encima para ver el detalle.</p>
-      ${timeline(p)}
     </section>` : ""}`;
   const bottom = `
     ${body ? `<section class="card">
       <h2>Momentos de riesgo postural</h2>
-      <p class="muted">Intervalos con nivel de acción REBA ${p.events.length ? "igual o superior al de alerta" : ""}.</p>
-      ${p.events.length ? `<div class="table-wrap"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Nivel</th><th class="num">REBA</th><th>Actuación</th><th>Causas</th></tr></thead>
-        <tbody>${p.events.map(e => `<tr>
-          <td><code>${clock(e.start)}–${clock(e.end)}</code></td><td>${badge(e.level)}</td>
-          <td class="num">${e.score}</td><td>${esc(e.action)}</td><td>${esc(e.causes.join(", ") || "—")}</td></tr>`).join("")}
-        </tbody></table></div>` : `<p class="muted">No hubo momentos de riesgo.</p>`}
+      <p class="muted">Momentos con nivel de acción REBA igual o superior al de alerta, por nivel y por causa (tramos de la NTP 601). Para proteger los datos de las personas solo se guarda cuántas veces ocurrió cada cosa y cuánto duró en total, no cuándo.</p>
+      ${risksHtml(p)}
     </section>` : ""}
 
     ${body && p.pushing ? pushingHtml(p.pushing) : ""}
@@ -737,9 +718,9 @@ function personHtml(p) {
       <h2>Levantamientos (ecuación de NIOSH)</h2>
       <p class="muted">${esc(lifting.method)}.</p>
       ${lifts.length ? `<div class="table-wrap"><table class="table">
-        <thead><tr><th>Intervalo</th><th>Tipo</th><th class="num">Recorrido</th><th class="num">LPR</th><th>Índice</th><th>Avisos</th></tr></thead>
-        <tbody>${lifts.map(l => `<tr>
-          <td><code>${clock(l.start.second)}–${clock(l.end.second)}</code></td><td>${esc(l.kind)}</td>
+        <thead><tr><th class="num">N.º</th><th>Tipo</th><th class="num">Recorrido</th><th class="num">LPR</th><th>Índice</th><th>Avisos</th></tr></thead>
+        <tbody>${lifts.map((l, n) => `<tr>
+          <td class="num">${n + 1}</td><td>${esc(l.kind)}</td>
           <td class="num">${num(l.d, 0)} cm</td><td class="num">${num(l.limit)} kg</td>
           <td>${liftLevelBadge(l)}</td><td>${esc(l.notes.join("; ") || "—")}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">No se detectaron levantamientos.</p>`}
@@ -879,7 +860,7 @@ function renderWritten(name, written, writing) {
   box.innerHTML = `
     <summary>
       <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-      <h2>Informe detallado</h2>
+      <h2>Informe de evaluación ergonómica</h2>
       <span class="fold-state">${state}</span>
       <span class="written-actions">${actions}</span>
     </summary>
@@ -931,6 +912,7 @@ async function printDocument(kind, name) {
 let summaries = [];
 
 function localDay(iso) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return iso;
   const d = new Date(iso);
   if (isNaN(d)) return "";
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

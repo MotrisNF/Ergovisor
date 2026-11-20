@@ -5,6 +5,7 @@ import fire
 
 from .argv_guard import ArgvGuard
 from .commands import RagCLI
+from .env_file import load_env
 from .exceptions import ArgError, RagError, UsageError
 
 
@@ -20,6 +21,7 @@ def main() -> None:
     - Ctrl+C → exit 130.
     - Anything else is a bug → ``Unexpected error`` → exit 1.
     """
+    load_env()
     guard = ArgvGuard(RagCLI)
     try:
         argv = guard.check(sys.argv[1:])

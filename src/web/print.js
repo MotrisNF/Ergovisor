@@ -5,6 +5,9 @@
 const params = new URLSearchParams(location.search);
 
 function day(iso) {
+  // Reports keep only their day (no time).
+  const only = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (only) return `${only[3]}/${only[2]}/${only[1]}`;
   const d = new Date(iso);
   return isNaN(d) ? (iso || "—") : d.toLocaleString("es-ES", {
     day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
@@ -68,7 +71,7 @@ async function draw() {
       const people = a.people || [];
       const seconds = Math.max(0, ...people.map(p =>
         Math.max(p.summary?.seconds || 0, p.office?.seconds_at_screen || 0)));
-      type = "Informe detallado";
+      type = "Informe de evaluación ergonómica";
       title = data.written.title;
       text = data.written.markdown;
       rows = [["Puesto o fuente analizada", sourceName(a.source)],

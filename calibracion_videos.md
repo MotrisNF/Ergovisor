@@ -46,7 +46,8 @@ con ruedas o carro, unos 3 m de espacio libre.
 | C1–C5 | Empujar y arrastrar | Hechos. C1 2/3, C2 3/3, C3 3/3, remolcar con un brazo (C4) 1/3; sin falsos positivos (C5) ni levantamientos falsos junto a los empujes. Si se repiten, más lejos de la cámara (se cortaba la cabeza o los pies) |
 | E1 | Varias personas (tres, libremente) | Hecho: `grabacion_2026-11-18_13-15-28.mp4`. Ver resultados abajo |
 | E2 | De pie delante del portátil | Hecho: `grabacion_2026-11-18_14-38-04.mp4`. De pie se mide bien como trabajo con pantalla (distancia 33–37 cm, real ~30; cuello 45–52°, un riesgo real si se mantiene): no hace falta separarlo. Corregido que la gente que pasaba por detrás le quitara el número a la persona |
-| D1–D2 | Sesiones largas | Pendiente |
+| D1 | Oficina, 35 min | Hecho: `grabacion_2026-11-18_15-02-54.mp4`. Ver resultados abajo |
+| D2 | Manipulación, 5–10 min | Pendiente (opcional) |
 
 ## A. Puesto con pantalla: cámara del portátil (`Cámara 0`)
 
@@ -147,3 +148,27 @@ como empuje (12 cm y 62 cm) y ya no.
 - **Límite conocido:** al cruzarse o al salir una persona y entrar otra,
   los números pueden intercambiarse. Probado añadir el color de la ropa:
   no mejoró (26 cambios frente a 28) y se quitó.
+
+**Sesión larga de oficina (D1, 35 min en el portátil, con gente pasando y
+charlando al fondo de un pasillo).**
+- Antes de corregir: la persona sentada cambiaba de número 17 veces y su
+  tiempo de pantalla quedaba repartido en tres (21 + 12 + 2 min), así que
+  **no saltaba ningún aviso**; la gente del fondo sumaba 46 levantamientos.
+- Un "levantamiento" no puede empezar antes de que la persona deje de
+  verse y acabar cuando vuelve (salían de 30 s a 7 min): tras 1 s sin
+  medir las manos, se empieza de cero. Los reales duran 0,7–12 s.
+- Para seguir a cada persona cuentan la cabeza y los hombros y el ancho de
+  hombros, no la caja del esqueleto: en el portátil el modelo se inventa
+  las piernas fuera de la imagen y la caja saltaba de 0,3 a 1,1 de la
+  altura de un fotograma a otro. Ahora: 0 cambios, una sola persona en
+  pantalla 35 min, y los avisos saltan a los 20 min (descanso visual) y a
+  los 30 (pausa). Los vídeos de calibración dan lo mismo que antes.
+- El cuerpo solo se puntúa si, de pie, la persona ocupa al menos el 40 %
+  de la altura de la imagen (lo más alto que se la vio entera en los
+  últimos 10 s, para no perderla al agacharse). Las personas de la
+  calibración ocupan de 0,54 a 0,97; las del fondo de D1, 0,31.
+- Resultado: 0 momentos de riesgo y 0 levantamientos de la persona
+  sentada; de la gente que pasa quedan 4 levantamientos y 9 momentos
+  (personas andando muy cerca de la cámara y una limpiadora fregando).
+- Rendimiento: 35 min analizados en 30 min (10 fotogramas por segundo,
+  hasta tres personas), más rápido que el tiempo real.

@@ -7,7 +7,7 @@ import pytest
 
 from src.posture.face import Face, eye_distance_cm, head_angles
 from src.posture.office import (BREAK_EVERY, REST_EVERY, Office,
-                                OfficeEvent, view_of)
+                                OfficeEvent, WarningCount, view_of)
 from src.posture.regulation import (OFFICE_TOPICS, TOPICS, LiveRegulation,
                                     office_warnings)
 from src.posture.skeleton import Point, Skeleton
@@ -241,7 +241,11 @@ class TestRegulation:
     def test_live(self) -> None:
         event = OfficeEvent(kind="too_close", title="Pantalla demasiado cerca",
                             start=1, end=12, detail="a 25 cm")
-        assert office_warnings(event)[0][0] == "screen_distance"
+        count = WarningCount(kind="too_close", title="Pantalla demasiado "
+                             "cerca", times=2, seconds=23.0)
+        [(topic, text)] = office_warnings(count)
+        assert topic == "screen_distance"
+        assert text == "Pantalla demasiado cerca: 2 veces, 23 s en total"
 
         class Empty:
             def search(self, query: str, k: int) -> list[object]:
@@ -295,10 +299,23 @@ class TestAnalysisSwitchesView:
         def view(second: float) -> str:
             return "body" if 100 <= second < 160 else "desk"
 
+        def standing() -> Skeleton:
+            """Up in front of the camera, filling the image's height."""
+            from test_posture_reba import Body
+
+            seen = skeleton(hips=True, shoulder_width=0.1)
+            assert seen.pixels is not None
+            pixels = seen.pixels.copy()
+            pixels[Point.NOSE] = (0.5, 0.1)
+            pixels[[Point.LEFT_ANKLE, Point.RIGHT_ANKLE]] = (0.5, 0.95)
+            # A real body in 3D (a stature a person can have).
+            body = Body().skeleton()
+            return replace(seen, points=body.points,
+                           visibility=body.visibility, pixels=pixels)
+
         class Poses:
             def find_all(self, frame: Frame) -> list[Skeleton]:
-                seen = (skeleton(hips=True, shoulder_width=0.1)
-                        if view(frame.timestamp) == "body"
+                seen = (standing() if view(frame.timestamp) == "body"
                         else skeleton(hips=False))
                 return [replace(seen, timestamp=frame.timestamp)]
 

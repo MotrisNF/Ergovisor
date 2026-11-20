@@ -9,9 +9,12 @@ regulation or technical guide behind it, and a language model can write
 a formal report that cites those passages.
 
 Everything runs on the computer: the video and the images never leave it,
-nobody is recognised (people are "Persona 1", "Persona 2"...), and only
-angles, distances and times are saved. Only the optional written report
-sends the measures (numbers and words, no images) to Gemini.
+and nobody is recognised (people are "Persona 1", "Persona 2"...). The
+reports are anonymous, as the data protection rules (RGPD) ask of
+measures of people at work: they keep the day of the session but not its
+time, and how often and how long each thing happened, never when (no
+timeline, no second of the session). Only the optional written report
+sends those measures (numbers and words, no images) to Gemini.
 
 The documentation of the original RAG project (the vLLM question
 answering system this one started from) is in
@@ -44,8 +47,13 @@ How it works:
    RD 488/1997, the INSST guides on manual handling and screens, NTP 477
    and NTP 601) with the project's own BM25 retriever.
 4. **Report.** On request (or by itself when a session ends with
-   something found), Gemini writes a formal report from the measures and
-   those passages; every citation is checked against the passages given.
+   something found), Gemini writes the ergonomic assessment report from
+   the measures and those passages, with what a risk assessment must
+   record (RD 39/1997, art. 7): the job, the risks, the people affected,
+   the result, and the preventive measures planned by priority (art. 9).
+   The level and priority of each risk are worked out by the program from
+   each method's scale (`src/posture/assessment.py`), not by the model;
+   every citation is checked against the passages given.
 
 Every threshold the regulation does not fix is marked "Ours" in the code,
 with the calibration it comes from: see
@@ -53,7 +61,8 @@ with the calibration it comes from: see
 and their results. To keep false alarms down, a movement only counts as a
 lift or a push when it is made with both hands holding one object (the
 NIOSH equation and the guide's push-pull methods are for two hands), and
-postures are only scored when the whole body is in the picture.
+postures are only scored when the whole body is in the picture and near
+enough to measure it (standing, at least 40 % of the image's height).
 
 ## Instructions
 
@@ -62,7 +71,9 @@ postures are only scored when the whole body is in the picture.
 - Linux or macOS, Python 3.10+, [uv](https://docs.astral.sh/uv/).
 - A webcam, a USB camera or an IP camera (a phone with IP Webcam works).
 - Optional: `ffmpeg`, so the drawn and recorded videos play in any
-  browser; a `GEMINI_API_KEY` for the written reports.
+  browser; a Gemini API key for the written reports: copy `.env-example`
+  to `.env` and put it there (`.env` is never committed; a
+  `GEMINI_API_KEY` exported in the shell takes precedence).
 
 ### Installation
 
@@ -110,7 +121,13 @@ $ make lint     # flake8 and mypy
 - It is an automatic analysis: it does not replace the risk assessment by
   competent technical staff, and every report says so.
 - The video does not show the load's weight nor the push force: they are
-  given by the person, or the report says they could not be assessed.
+  given by the person, or the report says they could not be assessed
+  (without the load, a lift gets its weight limit but no level of risk).
+  Nor how long the task goes on: unless given, a short task (1 h or
+  less) is assumed and the report says so.
+- Measures no body can take (a stature under 140 cm or over 210 cm, the
+  hands out of reach, the trunk bent over 135°) are the model's error and
+  are not scored.
 - Some REBA points cannot be seen on a skeleton (a supported arm, wrist
   twist, shoulders raised) and are never added.
 - People are numbered by where they are: when two cross or one leaves and

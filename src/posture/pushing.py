@@ -33,7 +33,7 @@ import numpy as np
 from pydantic import BaseModel
 
 from .angles import Angles, body_axes
-from .lifting import Sex, _Body, place
+from .lifting import BodyHeights, Sex, place
 from .skeleton import Point, Skeleton
 
 Kind = Literal["empuje", "arrastre"]
@@ -86,8 +86,11 @@ class Push(BaseModel):
 
     Attributes:
         kind: ``empuje`` or ``arrastre``.
-        start: Second it started (the start is the riskiest moment).
-        end: Second it ended.
+        start: Second it started (the start is the riskiest moment);
+            ``None`` in a report (not kept, see
+            ``analysis.PersonAnalysis``).
+        end: Second it ended (``None`` in a report).
+        seconds: How long it lasted.
         metres: Distance covered, approximately.
         hands_low_cm: Lowest height of the hands above the floor.
         hands_high_cm: Highest height of the hands above the floor.
@@ -97,8 +100,9 @@ class Push(BaseModel):
     """
 
     kind: Kind
-    start: float
-    end: float
+    start: float | None = None
+    end: float | None = None
+    seconds: float = 0.0
     metres: float
     hands_low_cm: float
     hands_high_cm: float
@@ -112,7 +116,7 @@ class PushingReport(BaseModel):
 
     Attributes:
         method: What was measured and against what.
-        pushes: Every push and pull, in order.
+        pushes: Every push and pull, in order, without when.
         per_minute: How many a minute, over the time seen.
         force_initial_n: The force to start the movement, if given.
         force_sustained_n: The force to keep it moving, if given.
@@ -213,7 +217,7 @@ class Pushing:
     pushes: list[Push] = field(default_factory=list)
     _track: deque[tuple[float, float, float]] = field(default_factory=deque)
     _steps: list[_Step] = field(default_factory=list)
-    _body: _Body = field(default_factory=_Body)
+    _body: BodyHeights = field(default_factory=BodyHeights)
     _first: float | None = None
     _last: float = 0.0
 
@@ -303,7 +307,9 @@ class Pushing:
         trunk = max(s.trunk for s in steps)
         twist = max(s.twist for s in steps)
         push = Push(kind=kind, start=round(steps[0].second, 2),
-                    end=round(steps[-1].second, 2), metres=round(metres, 1),
+                    end=round(steps[-1].second, 2),
+                    seconds=round(steps[-1].second - steps[0].second, 1),
+                    metres=round(metres, 1),
                     hands_low_cm=round(low, 1), hands_high_cm=round(high, 1),
                     trunk=round(trunk, 1), twist=round(twist, 1),
                     notes=self._notes(kind, low, high, trunk, twist, k))
@@ -384,7 +390,8 @@ class Pushing:
                 f"Sin la estatura real, las distancias suponen una persona "
                 f"de {STATURE_M:.2f} m.")
         return PushingReport(
-            pushes=self.pushes,
+            pushes=[push.model_copy(update={"start": None, "end": None})
+                    for push in self.pushes],
             per_minute=round(len(self.pushes) / minutes, 2),
             force_initial_n=self.force_initial_n,
             force_sustained_n=self.force_sustained_n,

@@ -82,13 +82,16 @@ class TestEvaluate:
         assert result.limit == LC and result.index == 1.0
 
     def test_beyond_the_equation(self) -> None:
-        """H over 63 cm: the limit is 0 kg (NTP 477), no index, and the
-        risk is high whatever the load (it was an infinite index, saved
-        as "no load")."""
-        for load in (10, None):
-            result = evaluate(70, 75, 50, 0, 1, "larga", "bueno", load)
-            assert result.limit == 0 and result.index is None
-            assert result.risk == "Incremento acusado del riesgo"
+        """H over 63 cm: the limit is 0 kg (NTP 477) and no index. With a
+        load, the risk is high whatever it weighs; without one, no risk is
+        named (NTP 477 reads it from the index, and moving the empty hands
+        is no load: raising the arms in B3 read "acusado")."""
+        loaded = evaluate(70, 75, 50, 0, 1, "larga", "bueno", 10)
+        assert loaded.limit == 0 and loaded.index is None
+        assert loaded.risk == "Incremento acusado del riesgo"
+        empty = evaluate(70, 75, 50, 0, 1, "larga", "bueno", None)
+        assert empty.limit == 0 and empty.index is None
+        assert empty.risk == ""
 
     def test_lift_beyond_the_equation_says_why(self) -> None:
         """A lift far from the body: marked, with the reason first."""
@@ -179,8 +182,14 @@ def play(lifting: Lifting,
     """Feed hand heights: ``(seconds, from_drop, to_drop)`` segments, the
     hands moving linearly 30 cm ahead, ``apart`` metres from each other;
     the lifts found."""
+    return play_from(lifting, 0.0, plan, apart)
+
+
+def play_from(lifting: Lifting, second: float,
+              plan: Sequence[tuple[float, float, float]],
+              apart: float = 0.10) -> list[Lift]:
+    """Like ``play``, from ``second`` on."""
     found: list[Lift] = []
-    second = 0.0
     for seconds, start, end in plan:
         steps = int(seconds * FPS)
         for n in range(steps):
@@ -241,10 +250,9 @@ class TestLifting:
         play(lifting, [(2, 0.10, 0.10), (2, 0.10, 0.70), (2, 0.70, 0.70),
                        (1, 0.70, 0.45), (2, 0.45, 0.45), (1, 0.45, 0.10),
                        (2, 0.10, 0.10)])
-        report = lifting.report()
-        starts = [lift.start.second for lift in report.lifts]
+        starts = [lift.start.second for lift in lifting.lifts]
         assert len(starts) == len(set(starts))
-        assert report.lifts[-1].d == pytest.approx(60, abs=6)
+        assert lifting.report().lifts[-1].d == pytest.approx(60, abs=6)
 
     def test_one_hand_is_no_lift(self) -> None:
         """One hand goes down to the floor and up, the other stays: not a
@@ -310,6 +318,53 @@ class TestLifting:
         lifts = play(Lifting(), [(2, 0.7, 0.7), (10, 0.7, 0.1),
                                  (2, 0.1, 0.1)])
         assert len(lifts) == 1
+
+    def test_gone_between_is_no_lift(self) -> None:
+        """Hands low, the person out of the picture for 5 s, back with the
+        hands high: no lift (it was not seen; an office session gave
+        "lifts" of minutes that way). Leaving a load low and taking it
+        again after it still count."""
+        lifting = Lifting(load_kg=5)
+        low, high = reaching(0.30, 0.70), reaching(0.30, 0.10)
+        for n in range(2 * FPS):
+            lifting.add(low.skeleton(n / FPS))
+        for n in range(5 * FPS):
+            lifting.add(None)
+        for n in range(2 * FPS):
+            lifting.add(high.skeleton(7 + n / FPS))
+        assert lifting.report().lifts == []
+        found = play_from(lifting, 9.0, [(2, 0.10, 0.70), (2, 0.70, 0.70),
+                                         (2, 0.70, 0.10), (2, 0.10, 0.10)])
+        assert [lift.kind for lift in found] == ["descenso", "levantamiento"]
+        assert (found[0].start.second or 0) >= 7
+
+    def test_impossible_measures_not_scored(self) -> None:
+        """Hands beyond what a person reaches, or a stature no person has:
+        the model's error, not a lift (a "limit of 0 kg" for hands above
+        175 cm in a person of 164, 2026-11-20)."""
+        from src.posture.lifting import NOSE_OF_STATURE
+
+        lifting = Lifting()
+        lifting._body.head = 170 * NOSE_OF_STATURE
+
+        def spot(v: float, h: float = 30.0) -> Place:
+            return Place(second=0.0, v=v, h=h, a=0.0)
+
+        assert lifting._possible(spot(20), spot(200))
+        assert not lifting._possible(spot(20), spot(220))
+        assert not lifting._possible(spot(-20), spot(100))
+        assert not lifting._possible(spot(20, h=110), spot(100))
+        lifting._body.head = 95 * NOSE_OF_STATURE
+        assert not lifting._possible(spot(20), spot(80))
+
+    def test_duration_assumed_is_said(self) -> None:
+        """Without the task's duration, a short one is assumed and the
+        report says so; given, it is not."""
+        assumed = " ".join(Lifting().report().assumptions)
+        assert "corta" in assumed and "supuesta" in assumed
+        given = " ".join(Lifting(duration="larga", duration_assumed=False)
+                         .report().assumptions)
+        assert "larga" in given and "supuesta" not in given
 
     def test_report_and_notes(self) -> None:
         """Frequency, the INSST's reference weight and its warnings."""

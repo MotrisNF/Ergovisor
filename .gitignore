@@ -14,6 +14,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Secrets: the API key (see .env-example)
+.env
+
 # Data: the corpus, the datasets, the index and the outputs are provided or
 # generated at evaluation, so the whole folder stays out of the repository.
 # The commands create the index and output folders they write to.

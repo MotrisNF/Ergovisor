@@ -89,12 +89,36 @@ HANDS_LEVEL_CM = 10.0
 HANDS_STEADY_CM = 30.0
 # How long the hands are kept, s (longer than any lift).
 HANDS_KEPT = 120.0
+# Ours: the hands are followed again from scratch after this long (s)
+# without measuring them (the person gone, or not seen whole), like a
+# person missing for longer than the tracker's bridge: a lowering before
+# leaving and a rise after coming back are not one lift (an office
+# session gave "lifts" of 30 s to 7 min that way; the real ones of the
+# calibration videos took 0.7-12 s, 2026-11-18).
+HANDS_GAP = 1.0
 # Ours, from body proportions: the knuckles hang at about 0.83 times the
 # height of the hip joint (about 0.43 and 0.52 of the stature).
 KNUCKLES_OF_HIP = 0.83
 # Ours, from body proportions: the nose is at about 0.92 of the stature;
 # with the real stature given, every distance is scaled by it.
 NOSE_OF_STATURE = 0.92
+# Ours: the statures a person can have, cm (adults: the 1st percentile of
+# women and the 99th of men are about 150 and 195). Measured out of it
+# over a whole session (the tallest seen standing), the model has made
+# up the floor or the legs (a person "95 cm" tall at a laptop,
+# 2026-11-20), and the heights of the hands from the floor cannot be
+# trusted: no lift is scored. A frame with the head higher than the
+# tallest is not measured at all.
+STATURE_MIN, STATURE_MAX = 140.0, 210.0
+# Ours, from body proportions: the hands reach up to about 1.25 times the
+# stature (the arms raised) and forward, from the ankles, about 0.6 times
+# it (the arm, about 0.44 of it, and the trunk bent); a lift measured
+# beyond (or with the hands under the floor) is the model's error: it
+# gave a limit of 0 kg and an "incremento acusado del riesgo" for hands
+# "above 175 cm" in a person of 164 (2026-11-20).
+REACH_UP = 1.25
+REACH_AHEAD = 0.6
+UNDER_FLOOR_CM = 10.0
 
 # INSST guide 2024, table 2 (from ISO 11228-1): heaviest load in ideal
 # conditions, kg, by sex and age.
@@ -113,13 +137,14 @@ class Place(BaseModel):
     """Where the hands are at the start or the end of a lift.
 
     Attributes:
-        second: When.
+        second: When; ``None`` in a report (it is not kept, see
+            ``analysis.PersonAnalysis``).
         v: Height of the hands above the floor, cm.
         h: Horizontal distance from the middle of the ankles, cm.
         a: Twist from the front of the feet, degrees.
     """
 
-    second: float
+    second: float | None = None
     v: float
     h: float
     a: float
@@ -169,7 +194,7 @@ class LiftingReport(BaseModel):
         duration: How long the task lasts, as NIOSH counts it.
         lifts_per_minute: The frequency used (counted, or given).
         reference_kg: The INSST guide's heaviest load for the person.
-        lifts: Every lift and lowering, in order.
+        lifts: Every lift and lowering, in order, without when.
         max_index: The highest lifting index (of the lifts with one).
         beyond_limits: Lifts with a limit of 0 kg (no index: not
             acceptable with any load).
@@ -196,6 +221,12 @@ class LiftingReport(BaseModel):
     assumptions: list[str]
     scale: float = 1.0
     stature_cm: float = 0.0
+
+
+def _when(spot: Place) -> float:
+    """When the hands were there (always known while analysing)."""
+    assert spot.second is not None
+    return spot.second
 
 
 def _seen_mean(skeleton: Skeleton, points: list[Point]) -> Vector | None:
@@ -236,22 +267,28 @@ def place(skeleton: Skeleton) -> Place | None:
 
 
 @dataclass
-class _Body:
+class BodyHeights:
     """The person's heights standing, to know where the knuckles and the
-    shoulders are."""
+    shoulders are, and how tall they are."""
 
     hip: float = 0.0
     shoulder: float = 0.0
     head: float = 0.0
 
-    def add(self, skeleton: Skeleton) -> None:
-        """Keep the highest heights seen: standing upright."""
+    def add(self, skeleton: Skeleton) -> bool:
+        """Keep the highest heights seen: standing upright. Whether the
+        frame is possible: a head higher than the tallest stature (the
+        floor made up) is not kept."""
         feet = [p for p in (Point.LEFT_HEEL, Point.RIGHT_HEEL,
                             Point.LEFT_FOOT, Point.RIGHT_FOOT)
                 if skeleton.seen(p)]
         if not feet:
-            return
+            return True
         floor = max(float(skeleton.at(p)[1]) for p in feet)
+        if (skeleton.seen(Point.NOSE)
+                and _height(skeleton.at(Point.NOSE), floor)
+                > STATURE_MAX * NOSE_OF_STATURE):
+            return False
         for name, points in (("hip", [Point.LEFT_HIP, Point.RIGHT_HIP]),
                              ("shoulder", [Point.LEFT_SHOULDER,
                                            Point.RIGHT_SHOULDER]),
@@ -260,6 +297,7 @@ class _Body:
             if middle is not None:
                 setattr(self, name, max(getattr(self, name),
                                         _height(middle, floor)))
+        return True
 
     @property
     def knuckles(self) -> float:
@@ -271,6 +309,11 @@ class _Body:
         """The person's height as the model measures it, cm (0 unknown)."""
         return self.head / NOSE_OF_STATURE
 
+    @property
+    def possible(self) -> bool:
+        """Whether that height is a person's (see ``STATURE_MIN``)."""
+        return STATURE_MIN <= self.stature <= STATURE_MAX
+
 
 @dataclass
 class Lifting:
@@ -280,6 +323,11 @@ class Lifting:
         load_kg: The load handled, or ``None`` if not given.
         grip: How good the grip on it is.
         duration: How long the task lasts.
+        duration_assumed: The duration was not given: ``corta`` is
+            assumed (the report says so). The video shows a moment of the
+            task, not how long it goes on; the longest duration would
+            give a limit of 0 kg to any lift repeated a few times in a
+            short recording (9 in 44 s, 2026-11-20).
         reference_kg: The INSST guide's heaviest load for the person.
         lifts_per_minute: The frequency, or 0 to count it.
         height_cm: The person's real height: every distance is scaled so
@@ -289,7 +337,8 @@ class Lifting:
 
     load_kg: float | None = None
     grip: Grip = "bueno"
-    duration: Duration = "larga"
+    duration: Duration = "corta"
+    duration_assumed: bool = True
     reference_kg: float = REFERENCE_UNKNOWN
     lifts_per_minute: float = 0.0
     height_cm: float | None = None
@@ -319,7 +368,7 @@ class Lifting:
     _margin: float = 0.0
     _first: float | None = None
     _last: float = 0.0
-    _body: _Body = field(default_factory=_Body)
+    _body: BodyHeights = field(default_factory=BodyHeights)
 
     def add(self, skeleton: Skeleton | None) -> list[Lift]:
         """One frame; the lifts that just ended (usually none or one;
@@ -330,12 +379,14 @@ class Lifting:
         now = place(skeleton)
         if now is None:
             return []
+        if self._first is not None and _when(now) - self._last > HANDS_GAP:
+            self._restart()
         self._keep_hands(skeleton)
         if self._first is None:
             self._first = now.second
-        self._last = now.second
+        self._last = _when(now)
         self._recent.append(now)
-        while now.second - self._recent[0].second > STILL_SECONDS:
+        while _when(now) - _when(self._recent[0]) > STILL_SECONDS:
             self._recent.popleft()
         held = self._together(skeleton)
         if self._turn is None or self._extreme is None:
@@ -361,9 +412,19 @@ class Lifting:
             return self._confirm(-self._direction, (now, held))
         return self._confirm(0) if self._still() else []
 
+    def _restart(self) -> None:
+        """Follow the hands from scratch (see ``HANDS_GAP``); the lifts
+        already found are kept."""
+        self._recent.clear()
+        self._hands.clear()
+        self._turn = self._extreme = None
+        self._turns = []
+        self._direction = 0
+        self._scored_low, self._scored = None, 0
+
     def _still(self) -> bool:
         """Whether the hands stayed put over the last ``STILL_SECONDS``."""
-        if (self._recent[-1].second - self._recent[0].second
+        if (_when(self._recent[-1]) - _when(self._recent[0])
                 < STILL_SECONDS * 0.8):
             return False
         travel = (max(p.v for p in self._recent)
@@ -401,7 +462,7 @@ class Lifting:
         """Whether a movement was made with both hands holding one thing
         (see ``HANDS_SAME_WAY``)."""
         during = [h for h in self._hands
-                  if start.second - 0.05 <= h[0] <= end.second + 0.05]
+                  if _when(start) - 0.05 <= h[0] <= _when(end) + 0.05]
         if len(during) < 2:
             return False
         k = self.scale()
@@ -530,14 +591,26 @@ class Lifting:
         found = len(self.lifts) if count is None else count
         return max(found / minutes, F_MIN)
 
+    def _possible(self, start: Place, end: Place) -> bool:
+        """Whether the hands could be where they were measured, for the
+        person's stature (see ``REACH_UP``), at the model's scale."""
+        if not self._body.possible:
+            return False
+        stature = self._body.stature
+        return all(-UNDER_FLOOR_CM <= spot.v <= REACH_UP * stature
+                   and spot.h <= REACH_AHEAD * stature
+                   for spot in (start, end))
+
     def _score(self, start: Place, end: Place) -> Lift | None:
-        """A lift between two stops, if the hands travelled enough."""
-        if abs(end.v - start.v) * self.scale() < D_MIN:
+        """A lift between two stops, if the hands travelled enough and
+        could be there."""
+        if (abs(end.v - start.v) * self.scale() < D_MIN
+                or not self._possible(start, end)):
             return None
         rate = self.lifts_per_minute
         if not rate:
             # This lift included: the pace so far, over a minute at least.
-            minutes = max((end.second - (self._first or end.second)) / 60,
+            minutes = max((_when(end) - (self._first or _when(end))) / 60,
                           1.0)
             rate = max((len(self.lifts) + 1) / minutes, F_MIN)
         return self._lift(start, end, rate)
@@ -564,7 +637,8 @@ class Lifting:
         if worst.limit <= 0:
             notes.insert(0, "límite de peso recomendado 0 kg por "
                          + " y ".join(zero or ["la posición"])
-                         + ": no es aceptable con ninguna carga")
+                         + ": en estas condiciones ninguna carga es "
+                         "aceptable")
         return Lift(
             kind="levantamiento" if end.v > start.v else "descenso",
             start=_rounded(start), end=_rounded(end), d=round(d, 1),
@@ -602,7 +676,7 @@ class Lifting:
         one of ``spans`` (the person's pushes and pulls: the hands going
         onto or off the thing pushed are not a lift)."""
         def near(start: Place, end: Place) -> bool:
-            return any(a - margin <= end.second and start.second <= b + margin
+            return any(a - margin <= _when(end) and _when(start) <= b + margin
                        for a, b in spans)
 
         kept = [(n, raw) for n, raw in enumerate(self._raw)
@@ -615,14 +689,16 @@ class Lifting:
     def report(self) -> LiftingReport:
         """Every lift, scored again with the frequency of the whole
         recording, and the warnings of the task."""
-        raw = self._raw + [
+        raw = [(start, end) for start, end in self._raw + [
             (start, end) for start, end in self._pending()
-            if not any(a - self._margin <= end.second
-                       and start.second <= b + self._margin
+            if not any(a - self._margin <= _when(end)
+                       and _when(start) <= b + self._margin
                        for a, b in self._spans)]
+            if self._possible(start, end)]
         count = len(raw)
         rate = self.rate(count)
-        lifts = [self._lift(start, end, rate) for start, end in raw]
+        lifts = [_anonymous(self._lift(start, end, rate))
+                 for start, end in raw]
         indexes = [lift.index for lift in lifts if lift.index is not None]
         notes = []
         limit = FREQUENCY_LIMIT[self.duration]
@@ -637,7 +713,9 @@ class Lifting:
             "vez (la ecuación de NIOSH no se aplica a levantamientos con "
             "una sola mano, NTP 477).",
             f"Duración de la tarea: {self.duration} "
-            f"({DURATIONS[self.duration]}).",
+            f"({DURATIONS[self.duration]})"
+            + ("; supuesta al no indicarse: con más duración el límite "
+               "de peso es menor." if self.duration_assumed else "."),
             "Las distancias salen del esqueleto en 3D y tienen un error de "
             "varios centímetros.",
         ]
@@ -646,7 +724,7 @@ class Lifting:
                                "supone representativo de la tarea.")
         if not self.height_cm:
             assumptions.append(
-                "Sin la estatura real (--height_cm), las distancias usan la "
+                "Sin la estatura real de la persona, las distancias usan la "
                 "escala que estima el modelo, que puede errar un 10 % o más.")
         return LiftingReport(
             load_kg=self.load_kg, grip=self.grip, duration=self.duration,
@@ -657,6 +735,13 @@ class Lifting:
             stature_cm=round(self._body.stature * self.scale(), 1))
 
 
+def _anonymous(lift: Lift) -> Lift:
+    """A lift without when it was (see ``Place``)."""
+    return lift.model_copy(update={
+        "start": lift.start.model_copy(update={"second": None}),
+        "end": lift.end.model_copy(update={"second": None})})
+
+
 def _scaled(spot: Place, k: float) -> Place:
     """A place with its distances stretched ``k`` times."""
     return Place(second=spot.second, v=spot.v * k, h=spot.h * k, a=spot.a)
@@ -664,7 +749,7 @@ def _scaled(spot: Place, k: float) -> Place:
 
 def _rounded(spot: Place) -> Place:
     """A place with its measures rounded to the unit."""
-    return Place(second=round(spot.second, 2), v=round(spot.v, 1),
+    return Place(second=round(_when(spot), 2), v=round(spot.v, 1),
                  h=round(spot.h, 1), a=round(spot.a, 1))
 
 

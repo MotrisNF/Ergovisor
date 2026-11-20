@@ -31,24 +31,34 @@ class FakeRetriever(Retriever):
         return self.hits[:k]
 
 
-def make_analysis(events: list[dict[str, Any]] | None = None,
+def make_analysis(risks: list[dict[str, Any]] | None = None,
                   lifts: list[dict[str, Any]] | None = None,
                   notes: list[str] | None = None) -> Analysis:
-    """An analysis with these moments of risk and lifts."""
-    data: dict[str, Any] = {
-        "source": "video.mp4", "created": "2026-11-17T00:00:00+00:00",
-        "task": {}, "summary": {}, "events": events or []}
+    """An analysis of one person with these causes of risk (each in one
+    moment of level 3) and lifts."""
+    person: dict[str, Any] = {
+        "person": 1, "summary": {}, "risks": risks or [],
+        "moments": 1 if risks else 0,
+        "moments_by_level": {3: 1} if risks else {}}
     if lifts is not None:
-        data["lifting"] = {
+        person["lifting"] = {
             "load_kg": 5.0, "grip": "bueno", "duration": "larga",
             "lifts_per_minute": 2.0, "reference_kg": 25.0, "lifts": lifts,
             "max_index": None, "notes": notes or [], "assumptions": []}
-    return Analysis.model_validate(data)
+    return Analysis.model_validate({
+        "source": "video.mp4", "created": "2026-11-17", "task": {},
+        "people": [person]})
 
 
-def event(start: float, causes: list[str]) -> dict[str, Any]:
+def risk(cause: str, times: int = 1) -> dict[str, Any]:
+    return {"cause": cause, "times": times, "seconds": 5.0 * times,
+            "max_score": 9}
+
+
+def event(start: float, kinds: list[str]) -> dict[str, Any]:
     return {"start": start, "end": start + 5, "score": 9, "level": 3,
-            "risk": "Alto", "action": "Necesaria pronto", "causes": causes}
+            "risk": "Alto", "action": "Necesaria pronto", "causes": kinds,
+            "kinds": kinds}
 
 
 def lift(start: float, index: float | None,
@@ -76,6 +86,11 @@ class TestTopicOf:
         ("brazo izquierdo elevado 70°", "arm"),
         ("2 punto(s) de actividad (postura mantenida, repetida o brusca)",
          "activity"),
+        # timeline.kinds (the bands kept in a report)
+        ("tronco flexionado más de 60°", "trunk_flexion"),
+        ("rodillas flexionadas 30-60°", "legs"),
+        ("brazo elevado más de 90°", "arm"),
+        ("actividad: postura mantenida, repetida o brusca", "activity"),
         # Lifting notes
         ("carga separada del cuerpo (40 cm; la guía recomienda 25 cm o "
          "menos)", "distance"),
@@ -100,12 +115,15 @@ class TestTopicOf:
 
 
 class TestWarnings:
-    """The warnings of an analysis, in time order."""
+    """The warnings of an analysis: how often, never when."""
 
-    def test_event_gives_level_and_causes(self) -> None:
-        found = warnings(make_analysis([event(62.0, ["cuello en extensión"])]))
+    def test_risks_give_level_and_causes(self) -> None:
+        found = warnings(make_analysis([risk("cuello en extensión", 3)]))
         assert [t for t, _ in found] == ["reba_level", "neck"]
-        assert found[1][1] == "[01:02.0–01:07.0] cuello en extensión"
+        assert found[0][1] == ("1 momento(s) de riesgo alto (nivel de "
+                               "acción 3): actuación necesaria pronto")
+        assert found[1][1] == ("cuello en extensión: 3 veces, 15 s en "
+                               "total (REBA máximo 9)")
 
     def test_lift_index_only_above_one(self) -> None:
         found = warnings(make_analysis(lifts=[lift(1, 1.0, []),
@@ -129,14 +147,17 @@ class TestWarnings:
     def test_no_lifts_no_employer(self) -> None:
         assert warnings(make_analysis(lifts=[])) == []
 
-    def test_time_order(self) -> None:
+    def test_order_and_no_times(self) -> None:
+        """Postures first, then the lifts; no time in any warning."""
         analysis = make_analysis(
-            [event(50, ["tronco flexionado 60°"])],
+            [risk("tronco flexionado más de 60°")],
             [lift(10, 0.5, ["carga separada del cuerpo (40 cm)"])],
             ["16.0 levantamientos por minuto"])
-        topics = [t for t, _ in warnings(analysis)]
-        assert topics[:3] == ["distance", "frequency", "employer"]
-        assert topics[3:] == ["reba_level", "trunk_flexion"]
+        found = warnings(analysis)
+        assert [t for t, _ in found] == ["reba_level", "trunk_flexion",
+                                         "distance", "frequency",
+                                         "employer"]
+        assert not any("[" in text for _, text in found)
 
 
 class TestSearchTopic:
@@ -211,8 +232,8 @@ class TestFindRegulation:
     """One search per topic, however often it was seen."""
 
     def test_one_finding_per_topic(self) -> None:
-        analysis = make_analysis([event(1, ["cuello en extensión"]),
-                                  event(20, ["cuello flexionado 30°"])])
+        analysis = make_analysis([risk("cuello en extensión"),
+                                  risk("cuello flexionado más de 20°")])
         retriever = FakeRetriever([("a.md", 10, "x")])
         report = find_regulation(analysis, retriever, "idx")
         assert [f.topic for f in report.findings] == ["reba_level", "neck"]
@@ -222,22 +243,25 @@ class TestFindRegulation:
         assert report.index_dir == "idx"
 
     def test_unmatched_kept(self) -> None:
-        analysis = make_analysis([event(1, ["algo nuevo"])])
+        analysis = make_analysis([risk("algo nuevo")])
         report = find_regulation(analysis, FakeRetriever([]), "idx")
-        assert report.unmatched == ["[00:01.0–00:06.0] algo nuevo"]
+        assert report.unmatched == [
+            "algo nuevo: 1 vez, 5 s en total (REBA máximo 9)"]
 
     def test_on_finding_called(self) -> None:
         got: list[str] = []
-        find_regulation(make_analysis([event(1, [])]), FakeRetriever([]),
-                        "idx", on_finding=lambda f: got.append(f.topic))
-        assert got == ["reba_level"]
+        find_regulation(make_analysis([risk("cuello en extensión")]),
+                        FakeRetriever([]), "idx",
+                        on_finding=lambda f: got.append(f.topic))
+        assert got == ["reba_level", "neck"]
 
     def test_describe(self) -> None:
-        report = find_regulation(make_analysis([event(1, [])]),
+        report = find_regulation(make_analysis([risk("cuello en extensión")]),
                                  FakeRetriever([("d/a.md", 1, "texto")]),
                                  "idx")
         text = describe_finding(report.findings[0])
-        assert text.startswith("Nivel de riesgo y de acción REBA (1 vez)")
+        assert text.startswith("Nivel de riesgo y de acción REBA\n  · 1 "
+                               "momento(s) de riesgo alto")
         assert "a.md [0:5] texto" in text
 
 
@@ -249,8 +273,8 @@ class TestLiveRegulation:
         live = LiveRegulation(retriever, 2)
         first = live.event(Event(**event(1, ["cuello en extensión"])))
         assert [f.topic for f in first] == ["reba_level", "neck"]
-        second = live.event(Event(**event(9, ["cuello flexionado 30°",
-                                              "tronco inclinado 10°"])))
+        second = live.event(Event(**event(9, [
+            "cuello flexionado más de 20°", "tronco inclinado hasta 20°"])))
         assert [f.topic for f in second] == ["trunk_flexion"]
         assert len(retriever.queries) == 3
 
@@ -266,8 +290,9 @@ class TestLiveRegulation:
         retriever = FakeRetriever([("a.md", 10, "x")])
         live = LiveRegulation(retriever)
         live.event(Event(**event(1, [])))
-        analysis = make_analysis([event(1, [])], [lift(5, 0.5, [])],
+        analysis = make_analysis([], [lift(5, 0.5, [])],
                                  ["16.0 levantamientos por minuto"])
+        analysis.people[0].moments_by_level = {3: 1}
         report = find_regulation(analysis, retriever, "idx",
                                  searched=live.searched)
         assert [f.topic for f in report.findings] == [

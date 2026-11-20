@@ -75,12 +75,12 @@ SAME_PLACE = 0.06
 # Ours: a person seen less than this (s) is left out of the report: the
 # model took something for a person for an instant (one frame in B7).
 MIN_SECONDS = 2.0
-# Ours: how much a different size (the log of the ratio of the heights of
-# their boxes) counts against being the same person, in shares of the
-# image: half as tall counts as 0.14 of the image away.
+# Ours: how much a different size (the log of the ratio of the widths of
+# their shoulders, see ``locate``) counts against being the same person,
+# in shares of the image: half as wide counts as 0.14 of the image away.
 SIZE_WEIGHT = 0.2
 # Ours: how much each new step counts in the speed followed (the rest is
-# the previous speed), to smooth the jitter of the boxes.
+# the previous speed), to smooth the jitter of the points.
 SPEED_SMOOTHING = 0.5
 
 
@@ -115,6 +115,41 @@ def _centre(place: Box) -> np.ndarray:
 
 
 HEAD = (Point.NOSE, Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER)
+# Ours, from body proportions: the nose is about two thirds of the width
+# of the shoulders above their middle, so this many times that height is
+# about their width (it gives the size seen side-on, when the shoulders
+# are one behind the other).
+NECK_TO_SHOULDERS = 1.5
+
+
+def locate(skeleton: Skeleton) -> tuple[np.ndarray, float] | None:
+    """Where a person is in the image and how big: the middle of their
+    head and shoulders, and the width of their shoulders (0: unknown);
+    ``None`` with nothing seen.
+
+    Not their box: at a laptop the model makes up the legs out of the
+    picture, some frames calling them seen and some not, and the box of
+    the same person jumped from 0.3 to 1.1 of the image's height from one
+    frame to the next, so they were taken for someone else 17 times in 35
+    minutes and the screen work was cut in three. The head and shoulders
+    are seen in every view (D1, 2026-11-18: none; the calibration
+    videos gave the same as with the box).
+    """
+    head = [p for p in HEAD if skeleton.seen(p)]
+    if skeleton.pixels is None or not head:
+        place = box(skeleton)
+        return (_centre(place), 0.0) if place is not None else None
+    centre = np.asarray(skeleton.pixels[head].mean(axis=0), dtype=float)
+    if not skeleton.seen(Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER):
+        return centre, 0.0
+    left = skeleton.pixels[Point.LEFT_SHOULDER]
+    right = skeleton.pixels[Point.RIGHT_SHOULDER]
+    size = float(np.linalg.norm(left - right))
+    if skeleton.seen(Point.NOSE):
+        neck = float(np.linalg.norm(skeleton.pixels[Point.NOSE]
+                                    - (left + right) / 2))
+        size = max(size, neck * NECK_TO_SHOULDERS)
+    return centre, size
 
 
 def _same_head(a: Skeleton, b: Skeleton) -> bool:
@@ -147,12 +182,12 @@ def distinct(skeletons: list[Skeleton]) -> list[Skeleton]:
 
 @dataclass
 class _Known:
-    """A person seen: where, how tall, how fast and when, the last time
+    """A person seen: where, how big, how fast and when, the last time
     (where in shares of the image a second)."""
 
     number: int
     centre: np.ndarray
-    height: float
+    size: float
     second: float
     speed: np.ndarray = field(default_factory=lambda: np.zeros(2))
     seen: float = 0.0
@@ -168,15 +203,15 @@ class _Known:
         return float(np.linalg.norm(centre - self.expected(second)))
 
     def cost(self, second: float, centre: np.ndarray,
-             height: float) -> float:
+             size: float) -> float:
         """How unlike them a skeleton is: how far from where they should
         be, and how different in size."""
-        size = (abs(float(np.log(height / self.height)))
-                if height > 0 and self.height > 0 else 0.0)
-        return self.distance(second, centre) + SIZE_WEIGHT * size
+        unlike = (abs(float(np.log(size / self.size)))
+                  if size > 0 and self.size > 0 else 0.0)
+        return self.distance(second, centre) + SIZE_WEIGHT * unlike
 
     def move(self, second: float, centre: np.ndarray,
-             height: float) -> None:
+             size: float) -> None:
         """Seen again here."""
         step = second - self.second
         self.seen += min(max(0.0, step), BRIDGE)
@@ -186,7 +221,9 @@ class _Known:
                           + (1 - SPEED_SMOOTHING) * self.speed)
         elif step > BRIDGE:
             self.speed = np.zeros(2)
-        self.centre, self.height, self.second = centre, height, second
+        if size > 0:
+            self.size = size
+        self.centre, self.second = centre, second
 
 
 class Tracker:
@@ -215,9 +252,7 @@ class Tracker:
         found = distinct(skeletons)[:self.max_people]
         places: list[tuple[np.ndarray, float] | None] = []
         for skeleton in found:
-            place = box(skeleton)
-            places.append((_centre(place), place[3] - place[1])
-                          if place is not None else None)
+            places.append(locate(skeleton))
         # (cost, skeleton, number, cost after the others): someone
         # barely seen goes after everybody else (the 1 is more than any
         # distance in the image).
@@ -237,8 +272,8 @@ class Tracker:
                 if n in given or number in given.values():
                     continue
                 # Near counts the size too: someone far behind a person
-                # who sits down (the box jumping) is near where the person
-                # was, but much smaller (E2, 2026-11-18).
+                # who sits down is near where the person was, but much
+                # smaller (E2, 2026-11-18).
                 if near_only and (cost > GATE or second
                                   - self._known[number].second > BRIDGE):
                     continue

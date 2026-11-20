@@ -41,7 +41,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .exceptions import RagError
-from .posture.analysis import people_of
+from .posture.analysis import free_name, people_of
 from .posture.devices import Device, list_cameras
 from .posture.docx_export import to_docx
 from .posture.sessions import (Model, SessionConfig, SessionManager,
@@ -92,7 +92,8 @@ class Period(BaseModel):
 
 
 def local_date(iso: str) -> date:
-    """The local day of a report's time (saved in UTC)."""
+    """The local day of a report (saved as its day; older ones as a time
+    in UTC)."""
     try:
         moment = datetime.fromisoformat(iso)
     except ValueError:
@@ -102,17 +103,24 @@ def local_date(iso: str) -> date:
     return moment.date()
 
 
+def _order(name: str) -> tuple[int, str]:
+    """Sessions of one day in the order they were made: by the number
+    their name ends with (``camera_2026-11-20_10`` after ``_9``)."""
+    head, _, tail = name.rpartition("_")
+    return (int(tail), head) if tail.isdigit() and head else (0, name)
+
+
 class ReportSummary(BaseModel):
     """A saved report, for the history.
 
     Attributes:
         name: Its file name without ``.json``.
         source: The video or camera analysed.
-        created: When it was saved (UTC, ISO).
+        created: The day it was made (``YYYY-MM-DD``; never its time).
         seconds: Time analysed (of the person seen longest).
         max_score: Highest REBA score, of anybody.
         max_level: Highest REBA action level.
-        events: Moments of risk, of everybody.
+        events: Moments of risk, of everybody (how many; not when).
         lifts: Lifts and lowerings, of everybody.
         max_index: Highest lifting index, if any.
         beyond_limits: Lifts with a limit of 0 kg (no index, not
@@ -263,8 +271,9 @@ class WebApp:
             if not self._record:
                 raise HTTPException(403, "La grabación no está permitida "
                                          "en este servidor.")
-            record = str(self._uploads / (
-                f"grabacion_{datetime.now():%Y-%m-%d_%H-%M-%S}.mp4"))
+            record = str(self._uploads / (free_name(
+                self._uploads, f"grabacion_{datetime.now():%Y-%m-%d}",
+                ".mp4", number=True) + ".mp4"))
         return self.sessions.start(self._config(new.kind, source, label,
                                                 new.model, record))
 
@@ -367,20 +376,22 @@ class WebApp:
                                   + [0]),
                     max_level=max([s.get("max_level", 0) for s in summaries]
                                   + [0]),
-                    events=sum(len(p.get("events", [])) for p in people),
+                    events=sum(p.get("moments", 0) for p in people),
                     lifts=sum(len(lifting.get("lifts", []))
                               for lifting in liftings),
                     max_index=max(indices) if indices else None,
                     beyond_limits=sum(lifting.get("beyond_limits", 0)
                                       for lifting in liftings),
                     topics=topics,
-                    screen_warnings=(sum(len(o.get("events", []))
-                                         for o in offices)
+                    screen_warnings=(sum(w.get("times", 0)
+                                         for o in offices
+                                         for w in o.get("warnings", []))
                                      if offices else None),
                     people=len(people)))
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-        return sorted(found, key=lambda r: r.created, reverse=True)
+        return sorted(found, key=lambda r: (r.created, _order(r.name)),
+                      reverse=True)
 
     def report(self, name: str) -> dict[str, Any]:
         """A report: the analysis and its regulation (``null`` if none)."""
@@ -459,10 +470,10 @@ class WebApp:
             office = person.get("office") or {}
             seconds = max(person.get("summary", {}).get("seconds", 0.0),
                           office.get("seconds_at_screen", 0.0))
-            found = (person.get("events")
+            found = (person.get("moments")
                      or (person.get("lifting") or {}).get("lifts")
                      or (person.get("pushing") or {}).get("pushes")
-                     or office.get("events"))
+                     or office.get("warnings"))
             if seconds >= AUTO_MIN_SECONDS and found:
                 return True
         return False
@@ -577,8 +588,8 @@ class WebApp:
                 period.start.strftime("%d/%m/%Y"),
                 period.end.strftime("%d/%m/%Y"), llm, self._llm_model,
                 self._read_corpus)
-            name = (f"resumen_{period.start}_{period.end}_"
-                    f"{datetime.now():%H%M%S}")
+            name = free_name(self._summaries,
+                             f"resumen_{period.start}_{period.end}")
             save(written, self._summaries / f"{name}.json")
             return {"name": name, **written.model_dump()}
         finally:

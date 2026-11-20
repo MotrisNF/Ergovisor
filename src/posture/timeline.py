@@ -53,6 +53,8 @@ class Event(BaseModel):
         risk: The risk, in words (NTP 601).
         action: The intervention needed (NTP 601).
         causes: What makes the posture risky, at its worst moment.
+        kinds: The same, as the bands of NTP 601 (no degrees), to count
+            them (see ``kinds``).
     """
 
     start: float
@@ -62,6 +64,7 @@ class Event(BaseModel):
     risk: str
     action: str
     causes: list[str]
+    kinds: list[str] = []
 
 
 class Summary(BaseModel):
@@ -232,6 +235,7 @@ class Timeline:
             self._open.risk = result.risk
             self._open.action = result.action
             self._open.causes = causes(result, angles)
+            self._open.kinds = kinds(result, angles)
 
     def _close_if_over(self, second: float) -> Event | None:
         """Close the open moment when the risk has been gone long
@@ -258,33 +262,64 @@ class Timeline:
         return self._take()
 
 
-def causes(result: Reba, angles: Angles) -> list[str]:
-    """What makes a posture risky, in words, with its angles."""
+def _causes(result: Reba, angles: Angles) -> list[tuple[str, str]]:
+    """What makes a posture risky: in words with its angles, and its kind
+    (the band of NTP 601 it falls in, with no degrees)."""
     found = []
+    trunk = angles.trunk
     if result.trunk >= 3:
-        kind = "flexionado" if angles.trunk > 0 else "en extensión"
-        found.append(f"tronco {kind} {abs(angles.trunk):.0f}°")
-    elif result.trunk == 2 and abs(angles.trunk) >= 5:
-        found.append(f"tronco inclinado {abs(angles.trunk):.0f}°")
+        kind = "flexionado" if trunk > 0 else "en extensión"
+        band = ("más de 60°" if trunk > 60 else "20-60°" if trunk > 20
+                else "más de 20°" if trunk < -20 else "hasta 20°")
+        found.append((f"tronco {kind} {abs(trunk):.0f}°",
+                      f"tronco {kind} {band}"))
+    elif result.trunk == 2 and abs(trunk) >= 5:
+        found.append((f"tronco inclinado {abs(trunk):.0f}°",
+                      "tronco inclinado hasta 20°"))
     if angles.trunk_twist > TWIST or angles.trunk_side > SIDE_BEND:
-        found.append("tronco girado o inclinado de lado")
+        found.append(("tronco girado o inclinado de lado",) * 2)
     if result.neck >= 2:
         # Scored for its flexion or extension, or only for being turned
         # or bent sideways (then a few degrees of flexion are no cause).
         if angles.neck > NECK_FLEXED:
-            found.append(f"cuello flexionado {angles.neck:.0f}°")
+            found.append((f"cuello flexionado {angles.neck:.0f}°",
+                          "cuello flexionado más de 20°"))
         elif angles.neck < -UPRIGHT:
-            found.append("cuello en extensión")
+            found.append(("cuello en extensión",) * 2)
         else:
-            found.append("cuello girado o inclinado de lado")
+            found.append(("cuello girado o inclinado de lado",) * 2)
     if result.legs >= 3:
-        found.append(f"rodillas flexionadas {angles.knee:.0f}°")
+        found.append((f"rodillas flexionadas {angles.knee:.0f}°",
+                      "rodillas flexionadas más de 60°" if angles.knee > 60
+                      else "rodillas flexionadas 30-60°"))
     if angles.one_leg:
-        found.append("apoyo sobre una pierna")
+        found.append(("apoyo sobre una pierna",) * 2)
     arm = angles.left if result.side == "izquierdo" else angles.right
     if arm is not None and result.upper_arm >= 3:
-        found.append(f"brazo {result.side} elevado {abs(arm.upper):.0f}°")
+        upper = arm.upper
+        band = ("más de 90°" if upper > 90 else "45-90°" if upper > 45
+                else "20-45°")
+        found.append((f"brazo {result.side} elevado {abs(upper):.0f}°",
+                      f"brazo elevado {band}" if upper >= 0
+                      else "brazo en extensión más de 20°"))
     if result.activity:
-        found.append(f"{result.activity} punto(s) de actividad "
-                     "(postura mantenida, repetida o brusca)")
+        found.append((f"{result.activity} punto(s) de actividad "
+                      "(postura mantenida, repetida o brusca)",
+                      ACTIVITY_KIND))
     return found
+
+
+# The kind of the activity points (REBA adds them for a posture held,
+# repeated or sudden).
+ACTIVITY_KIND = "actividad: postura mantenida, repetida o brusca"
+
+
+def causes(result: Reba, angles: Angles) -> list[str]:
+    """What makes a posture risky, in words, with its angles."""
+    return [text for text, _ in _causes(result, angles)]
+
+
+def kinds(result: Reba, angles: Angles) -> list[str]:
+    """What makes a posture risky, as the bands of NTP 601 (so the
+    moments can be counted without keeping their angles)."""
+    return [kind for _, kind in _causes(result, angles)]

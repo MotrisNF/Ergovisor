@@ -896,7 +896,7 @@ class RagCLI:
             show: bool = False,
             sex: Literal["", "hombre", "mujer"] = "",
             age: Annotated[int, Field(ge=0, le=100)] = 0,
-            task_duration: Literal["corta", "moderada", "larga"] = "larga",
+            task_duration: Literal["", "corta", "moderada", "larga"] = "",
             lifts_per_minute: Annotated[float, Field(ge=0)] = 0.0,
             height_cm: Annotated[float, Field(ge=0, le=250)] = 0.0,
             push_force_initial: Annotated[float, Field(ge=0)] = 0.0,
@@ -913,8 +913,9 @@ class RagCLI:
         (``--camera``): the analysis is the same, frame by frame. Each
         moment of risk is printed as soon as it ends; at the end, the
         whole analysis is saved as JSON and its path printed: named after
-        the video, or ``camera_<date>_<time>.json`` for a camera (when
-        it started), so sessions never overwrite each other.
+        the video, or ``camera_<date>_<n>.json`` for a camera (its day
+        and a number, never its time), so sessions never overwrite each
+        other.
 
         Args:
             video: A video file to analyse.
@@ -945,7 +946,8 @@ class RagCLI:
             age: Age in years, for that load (0: unknown).
             task_duration: How long the lifting task lasts, for the NIOSH
                 equation: ``corta`` (1 h or less, with rest), ``moderada``
-                (1-2 h) or ``larga`` (more than 2 h).
+                (1-2 h) or ``larga`` (more than 2 h); ``corta`` unless
+                given, and the report says it was assumed.
             lifts_per_minute: How often the task lifts; 0 counts the
                 lifts in the video.
             height_cm: The person's real height, to scale the distances
@@ -964,7 +966,8 @@ class RagCLI:
             save_directory: Folder where the analysis JSON is written.
         """
         from .posture.analysis import (analyse, describe, describe_lift,
-                                       describe_office, describe_push)
+                                       describe_office, describe_push,
+                                       free_name)
         from .posture.pushing import Pushing
         from .posture.face import FaceEstimator
         from .posture.office import Office
@@ -991,7 +994,8 @@ class RagCLI:
         lifting = Lifting(
             load_kg=load_kg or None,
             grip=("bueno", "regular", "malo", "malo")[coupling],
-            duration=task_duration,
+            duration=task_duration or "corta",
+            duration_assumed=not task_duration,
             reference_kg=reference_kg(sex, age or None),
             lifts_per_minute=lifts_per_minute, height_cm=height_cm or None)
         pushing = Pushing(sex=sex,
@@ -1073,7 +1077,7 @@ class RagCLI:
             summary = seen.summary
             print(f"Persona {seen.person}: {summary.frames_with_person} of "
                   f"{summary.frames} frames scored, {summary.seconds:.1f} "
-                  f"s; {len(seen.events)} moments of risk, highest REBA "
+                  f"s; {seen.moments} moments of risk, highest REBA "
                   f"{summary.max_score}", file=sys.stderr)
             if seen.lifting is not None:
                 report = seen.lifting
@@ -1093,12 +1097,14 @@ class RagCLI:
                 distance = (f", usual distance {screen.distance_cm:.0f} cm"
                             if screen.distance_cm is not None else "")
                 print(f"  At a screen {screen.seconds_at_screen:.0f} s"
-                      f"{distance}, {len(screen.events)} warnings, "
+                      f"{distance}, {sum(w.times for w in screen.warnings)} "
+                      "warnings, "
                       f"{screen.blinks} blinks", file=sys.stderr)
-        # A camera session is named by when it started (local time), so
-        # a new session never overwrites the previous one.
+        # A camera session is named by its day and a number (never its
+        # time), so a new session never overwrites the previous one.
         stem = (Path(video).stem if video
-                else f"camera_{started:%Y-%m-%d_%H-%M-%S}")
+                else free_name(Path(save_directory),
+                               f"camera_{started:%Y-%m-%d}", number=True))
         path = self._save_json(save_directory, f"{stem}.json", result)
         print(f"Analysis saved in '{path}'", file=sys.stderr)
         if overlay:

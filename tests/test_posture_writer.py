@@ -16,18 +16,29 @@ from src.posture.writer import (Written, check_citations, collect_sources,
                                 describe_analysis, document_name, gemini,
                                 write_report, write_summary)
 
-ANALYSIS: dict[str, Any] = {
-    "source": "camera rtsp://***@h/s", "created": "2026-11-17T10:00:00+00:00",
+PERSON: dict[str, Any] = {
+    "person": 1,
     "summary": {"seconds": 60.0, "frames": 600, "frames_with_person": 600,
                 "seconds_by_level": {"0": 10.0, "2": 30.0, "3": 20.0},
                 "max_score": 9, "max_level": 3},
-    "events": [{"start": 5.0, "end": 9.0, "score": 9, "level": 3,
-                "risk": "Alto", "action": "Necesaria pronto",
-                "causes": ["tronco flexionado 70°"]}],
-    "unmeasured": ["hombro elevado"],
+    "moments": 1, "moments_by_level": {"3": 1},
+    "risks": [{"cause": "tronco flexionado más de 60°", "times": 1,
+               "seconds": 4.0, "max_score": 9}],
     "lifting": None,
     "office": None,
 }
+ANALYSIS: dict[str, Any] = {
+    "source": "camera rtsp://***@h/s", "created": "2026-11-17",
+    "unmeasured": ["hombro elevado"],
+    "people": [PERSON],
+}
+
+
+def with_person(**fields: Any) -> dict[str, Any]:
+    """``ANALYSIS`` with some of its person's fields changed."""
+    return {**ANALYSIS, "people": [{**PERSON, **fields}]}
+
+
 REGULATION: dict[str, Any] = {"findings": [
     {"topic": "trunk_flexion", "seen": ["a", "b"], "passages": [
         {"file_path": "corpus/rd_487_1997_cargas.md",
@@ -103,8 +114,9 @@ class TestPrompt:
 
     def test_analysis_described(self) -> None:
         text = describe_analysis(ANALYSIS)
-        assert "REBA máxima: 9" in text
-        assert "tronco flexionado 70°" in text
+        assert "REBA máxima de un solo instante: 9" in text
+        assert "tronco flexionado más de 60°: 1 vez, 4 s en total" in text
+        assert "1 de riesgo alto" in text
         assert "pantalla" not in text.lower()
 
     def test_office_described(self) -> None:
@@ -115,9 +127,12 @@ class TestPrompt:
                   "visual_rests": 0,
                   "longest_without_rest": 120.0, "breaks": 0,
                   "longest_without_break": 120.0, "blinks_per_minute": 12.0,
-                  "events": [], "assumptions": ["supuesto"]}
-        text = describe_analysis({**ANALYSIS, "office": office})
-        assert "48.0 cm" in text and "50 %" in text
+                  "warnings": [{"kind": "no_break", "title": "Sin pausa",
+                                "times": 2, "seconds": 90.0}],
+                  "assumptions": ["supuesto"]}
+        text = describe_analysis(with_person(office=office))
+        assert "Sin pausa, 2 veces, 1 min 30 s en total" in text
+        assert "48,0 cm" in text and "50 %" in text
         assert "no permite valorar si las pausas" in text
 
 
@@ -130,7 +145,8 @@ class TestWrite:
                                TEXTS.__getitem__)
         assert len(llm.calls) == 1
         assert "[1] NTP 601" in llm.calls[0][1]
-        assert written.markdown.startswith("# Informe detallado")
+        assert written.markdown.startswith(
+            "# Informe de evaluación ergonómica")
         assert "[9]" not in written.markdown
         assert written.uncited == [9]
         assert "## Referencias" in written.markdown
@@ -151,13 +167,13 @@ class TestWrite:
 
     def test_no_load_said(self) -> None:
         lifting: dict[str, Any] = {"lifts": [], "load_kg": None}
-        text = describe_analysis({**ANALYSIS, "lifting": {
-            **lifting, "lifts": [{"start": {"second": 1.0},
+        text = describe_analysis(with_person(lifting={
+            **lifting, "lifts": [{"start": {"second": None},
                                   "kind": "levantamiento", "d": 40.0,
                                   "limit": 9.1, "index": None, "risk": "",
                                   "notes": []}],
             "grip": "bueno", "duration": "larga", "reference_kg": 20.0,
-            "lifts_per_minute": 1.0, "notes": [], "assumptions": []}})
+            "lifts_per_minute": 1.0, "notes": [], "assumptions": []}))
         assert "no se puede calcular el índice" in text
 
     def test_summary(self) -> None:
@@ -284,10 +300,11 @@ class TestDocx:
 
 def write_analysis(folder: Path, name: str, created: str,
                    seconds: float = 60.0, events: bool = True) -> None:
-    summary = {**ANALYSIS["summary"], "seconds": seconds}
+    summary = {**PERSON["summary"], "seconds": seconds}
     (folder / f"{name}.json").write_text(json.dumps(
-        {**ANALYSIS, "created": created, "summary": summary,
-         "events": ANALYSIS["events"] if events else []}))
+        {**with_person(summary=summary, moments=1 if events else 0,
+                       risks=PERSON["risks"] if events else []),
+         "created": created}))
     (folder / f"{name}_regulation.json").write_text(json.dumps(REGULATION))
 
 
@@ -519,3 +536,73 @@ class TestAutomatic:
         sessions = manager([])
         WebApp(sessions, str(tmp_path), str(tmp_path), "")
         assert sessions.on_done is None
+
+
+class TestAssessment:
+    """The level and priority of each risk, worked out from each
+    method's own scale (the model only writes them up)."""
+
+    def test_postures_by_reba_level(self) -> None:
+        from src.posture.assessment import assess
+
+        [row] = assess(ANALYSIS)
+        assert row.risk == "Posturas forzadas"
+        assert (row.level, row.priority) == (
+            "Alto (nivel de acción 3)", "Alta")
+
+    def test_lifts_without_load_wait_for_it(self) -> None:
+        from src.posture.assessment import assess
+
+        lifting: dict[str, Any] = {"load_kg": None, "lifts": [
+            {"limit": 0.0, "index": None, "beyond_limits": True},
+            {"limit": 9.1, "index": None, "beyond_limits": False}]}
+        rows = assess(with_person(lifting=lifting))
+        lift = next(r for r in rows if r.risk.startswith("Manipulación"))
+        assert lift.priority == "Pendiente de datos"
+        assert "falta el peso" in lift.level
+
+    @pytest.mark.parametrize(("index", "beyond", "priority"), [
+        (0.8, False, "Baja"), (1.5, False, "Alta"), (3.2, False,
+                                                     "Inmediata"),
+        (0.8, True, "Inmediata")])
+    def test_lifts_by_index(self, index: float, beyond: bool,
+                            priority: str) -> None:
+        """NTP 477: up to 1 limited, 1-3 moderate, over 3 (or a limit of
+        0 kg with a load) unacceptable."""
+        from src.posture.assessment import assess
+
+        lifts: list[dict[str, Any]] = [
+            {"limit": 6.0, "index": index, "beyond_limits": False}]
+        if beyond:
+            lifts.append({"limit": 0.0, "index": None,
+                          "beyond_limits": True})
+        rows = assess(with_person(lifting={"load_kg": 8.0, "lifts": lifts}))
+        lift = next(r for r in rows if r.risk.startswith("Manipulación"))
+        assert lift.priority == priority
+
+    def test_most_urgent_first_and_tables(self) -> None:
+        from src.posture.assessment import (DEADLINES, assess,
+                                            assessment_table, data_table,
+                                            methods_table)
+
+        office = {"seconds_at_screen": 1900.0, "warnings": [
+            {"kind": "no_break", "title": "Sin pausa", "times": 1,
+             "seconds": 1800.0}]}
+        analysis = with_person(office=office)
+        rows = assess(analysis)
+        order = list(DEADLINES)
+        assert [order.index(r.priority) for r in rows] == sorted(
+            order.index(r.priority) for r in rows)
+        table = assessment_table(rows)
+        assert "| Posturas forzadas |" in table and "sin pausa" in table
+        assert "17/11/2026" in data_table(analysis)
+        assert "Trabajo con pantallas" in methods_table(analysis)
+        assert "REBA" in methods_table(analysis)
+
+    def test_prompt_has_the_tables(self) -> None:
+        from src.posture.writer import report_prompt
+
+        prompt = report_prompt(ANALYSIS, [])
+        assert "TABLA DE VALORACIÓN" in prompt
+        assert "Alto (nivel de acción 3)" in prompt
+        assert "TABLA DE DATOS" in prompt and "TABLA DE MÉTODOS" in prompt

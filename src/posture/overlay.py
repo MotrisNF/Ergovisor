@@ -137,7 +137,8 @@ class Overlay:
             self._people(pen, second, people)
         lifts = [(p.lift, p.person) for p in people if p.lift is not None]
         if lifts:
-            lift, person = max(lifts, key=lambda item: item[0].end.second)
+            lift, person = max(
+                lifts, key=lambda item: item[0].end.second or 0.0)
             self._lift(pen, lift, picture.size,
                        f"Persona {person} · " if several else "")
         events = [(p.event, p.person) for p in people if p.event is not None]

@@ -20,8 +20,9 @@ from ..base_retriever import Retriever
 from ..tokenizer_bm import Tokenizer
 from .analysis import Analysis, PersonAnalysis
 from .lifting import Lift
-from .office import OfficeEvent
+from .office import OfficeEvent, WarningCount
 from .pushing import Push
+from .reba import LEVELS
 from .timeline import Event
 
 # The search returns this many chunks, of which the best one of each file
@@ -168,6 +169,7 @@ CAUSES: tuple[tuple[str, str], ...] = (
     ("rodillas", "legs"),
     ("apoyo sobre una pierna", "legs"),
     ("brazo", "arm"),
+    ("actividad", "activity"),
     ("carga separada", "distance"),
     ("manos por", "height"),
     ("peso superior", "weight"),
@@ -218,7 +220,8 @@ class Finding(BaseModel):
     Attributes:
         topic: The key of the topic in ``TOPICS``.
         title: What it is.
-        seen: Each time it was seen: ``[mm:ss–mm:ss] warning``.
+        seen: What was seen of it: how often, and its measures (never
+            when).
         query: The search made.
         passages: The best chunk of each file, best first.
     """
@@ -236,7 +239,7 @@ class RegulationReport(BaseModel):
     Attributes:
         source: The video or camera analysed.
         index_dir: The index searched.
-        findings: One per topic, in the order they were first seen.
+        findings: One per topic, in the order of the warnings.
         unmatched: Warnings with no topic (none, unless a new warning was
             added to the analysis and not to ``CAUSES``).
     """
@@ -247,24 +250,44 @@ class RegulationReport(BaseModel):
     unmatched: list[str]
 
 
-def _clock(second: float) -> str:
-    return f"{int(second // 60):02d}:{second % 60:04.1f}"
+def duration(seconds: float) -> str:
+    """A time in words: ``45 s``, ``3 min 20 s``."""
+    total = round(seconds)
+    if total < 60:
+        return f"{total} s"
+    minutes, rest = divmod(total, 60)
+    return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+
+
+def _times(n: int) -> str:
+    return f"{n} {'vez' if n == 1 else 'veces'}"
 
 
 Warning = tuple[str | None, str]
 
 
-def event_warnings(event: Event) -> list[Warning]:
-    """A moment of risk: its REBA level and its causes.
+def risk_warnings(person: PersonAnalysis) -> list[Warning]:
+    """The moments of risk of a person: how many at each REBA level, and
+    how often each cause was seen (never when, see
+    ``analysis.PersonAnalysis``).
 
     Returns:
-        ``(topic, "[start–end] warning")`` pairs.
+        ``(topic, warning)`` pairs.
     """
-    when = f"[{_clock(event.start)}–{_clock(event.end)}]"
-    return ([("reba_level", f"{when} REBA {event.score}: riesgo "
-              f"{event.risk.lower()}, actuación {event.action.lower()}")]
-            + [(topic_of(cause), f"{when} {cause}")
-               for cause in event.causes])
+    found: list[Warning] = []
+    for level, moments in sorted(person.moments_by_level.items(),
+                                 reverse=True):
+        _, risk, action = next((lv, r, a) for _, lv, r, a in LEVELS
+                               if lv == level)
+        found.append(("reba_level", f"{moments} momento(s) de riesgo "
+                      f"{risk.lower()} (nivel de acción {level}): "
+                      f"actuación {action.lower()}"))
+    for count in person.risks:
+        found.append((topic_of(count.cause),
+                      f"{count.cause}: {_times(count.times)}, "
+                      f"{duration(count.seconds)} en total (REBA máximo "
+                      f"{count.max_score})"))
+    return found
 
 
 def lift_warnings(lift: Lift) -> list[Warning]:
@@ -272,20 +295,19 @@ def lift_warnings(lift: Lift) -> list[Warning]:
     notes.
 
     Returns:
-        ``(topic, "[start–end] warning")`` pairs.
+        ``(topic, warning)`` pairs.
     """
-    when = f"[{_clock(lift.start.second)}–{_clock(lift.end.second)}]"
     found: list[Warning] = []
     if lift.index is not None and lift.index > 1:
-        found.append(("lifting_index", f"{when} {lift.kind}: índice "
+        found.append(("lifting_index", f"{lift.kind}: índice "
                       f"{lift.index:.2f} ({lift.risk.lower()})"))
     notes = lift.notes
     if lift.beyond_limits and notes:
         # Its first note says why the limit is 0 kg.
-        found.append(("lifting_index", f"{when} {lift.kind}: {notes[0]} "
-                      f"({lift.risk.lower()})"))
+        risk = f" ({lift.risk.lower()})" if lift.risk else ""
+        found.append(("lifting_index", f"{lift.kind}: {notes[0]}{risk}"))
         notes = notes[1:]
-    return found + [(topic_of(note), f"{when} {lift.kind}: {note}")
+    return found + [(topic_of(note), f"{lift.kind}: {note}")
                     for note in notes]
 
 
@@ -293,88 +315,76 @@ def push_warnings(push: Push) -> list[Warning]:
     """A push or a pull: what it was, and its warnings.
 
     Returns:
-        ``(topic, "[start–end] warning")`` pairs.
+        ``(topic, warning)`` pairs.
     """
-    when = f"[{_clock(push.start)}–{_clock(push.end)}]"
-    found: list[Warning] = [("push_pull", f"{when} {push.kind} de "
+    found: list[Warning] = [("push_pull", f"{push.kind} de "
                              f"{push.metres:.1f} m")]
     for note in push.notes:
         topic = ("push_height" if note.startswith("manos")
                  else "trunk_twist" if note.startswith("tronco girado")
                  else "trunk_flexion")
-        found.append((topic, f"{when} {push.kind}: {note}"))
+        found.append((topic, f"{push.kind}: {note}"))
     return found
 
 
-def office_warnings(event: OfficeEvent) -> list[Warning]:
-    """A warning of the screen work, with its topic.
+def office_warnings(count: WarningCount) -> list[Warning]:
+    """A warning of the screen work, how often, with its topic.
 
     Returns:
-        ``(topic, "[start–end] title: detail")`` pairs.
+        ``(topic, "title: times, time in all")`` pairs.
     """
-    when = f"[{_clock(event.start)}–{_clock(event.end)}]"
-    return [(OFFICE_TOPICS[event.kind],
-             f"{when} {event.title}: {event.detail}")]
+    return [(OFFICE_TOPICS[count.kind],
+             f"{count.title}: {_times(count.times)}, "
+             f"{duration(count.seconds)} en total")]
 
 
 def warnings(analysis: Analysis) -> list[Warning]:
-    """Every warning of an analysis, with its topic, in time order.
+    """Every warning of an analysis, with its topic, person by person.
 
     Args:
         analysis: What ``analyse`` found.
 
     Returns:
-        ``(topic, "[start–end] warning")`` pairs. A moment of risk adds
-        its REBA level and its causes; a lift adds its notes, and its
-        index when above 1; a task with lifts adds the duties of the
-        employer and its notes (the frequency); screen work adds its
-        warnings and the duties of the employer for screens. With
-        several people, each warning starts with whose it is.
+        ``(topic, warning)`` pairs. The moments of risk add how many
+        there were at each REBA level and how often each cause was seen;
+        a lift adds its notes, and its index when above 1; a task with
+        lifts adds the duties of the employer and its notes (the
+        frequency); screen work adds its warnings and the duties of the
+        employer for screens. With several people, each warning starts
+        with whose it is.
     """
-    found: list[tuple[float, str | None, str]] = []
+    found: list[Warning] = []
     several = len(analysis.people) > 1
     for person in analysis.people:
-        found += [(second, topic, f"Persona {person.person}: {text}"
+        found += [(topic, f"Persona {person.person}: {text}"
                    if several else text)
-                  for second, topic, text in _person_warnings(person)]
-    found.sort(key=lambda item: item[0])
-    return [(topic, text) for _, topic, text in found]
+                  for topic, text in _person_warnings(person)]
+    return found
 
 
-def _person_warnings(analysis: PersonAnalysis
-                     ) -> list[tuple[float, str | None, str]]:
-    """The warnings of one person, with when they start."""
-    found: list[tuple[float, str | None, str]] = []
-    for event in analysis.events:
-        found += [(event.start, topic, text)
-                  for topic, text in event_warnings(event)]
+def _person_warnings(analysis: PersonAnalysis) -> list[Warning]:
+    """The warnings of one person."""
+    found = risk_warnings(analysis)
     report = analysis.lifting
     if report is not None and report.lifts:
         for lift in report.lifts:
-            found += [(lift.start.second, topic, text)
-                      for topic, text in lift_warnings(lift)]
-        first = report.lifts[0].start.second
-        found += [(first, topic_of(note), note) for note in report.notes]
-        found.append((first, "employer",
-                      f"{len(report.lifts)} levantamientos o descensos "
-                      "de cargas"))
+            found += lift_warnings(lift)
+        found += [(topic_of(note), note) for note in report.notes]
+        found.append(("employer", f"{len(report.lifts)} levantamientos o "
+                      "descensos de cargas"))
     pushing = analysis.pushing
     if pushing is not None and pushing.pushes:
         for push in pushing.pushes:
-            found += [(push.start, topic, text)
-                      for topic, text in push_warnings(push)]
-        first = pushing.pushes[0].start
-        found += [(first, "push_force", note) for note in pushing.notes]
-        found.append((first, "push_force",
-                      f"{len(pushing.pushes)} empujes o arrastres "
-                      "(límites de fuerza de la guía)"))
+            found += push_warnings(push)
+        found += [("push_force", note) for note in pushing.notes]
+        found.append(("push_force", f"{len(pushing.pushes)} empujes o "
+                      "arrastres (límites de fuerza de la guía)"))
     office = analysis.office
     if office is not None:
-        for warning in office.events:
-            found += [(warning.start, topic, text)
-                      for topic, text in office_warnings(warning)]
-        if office.events:
-            found.append((office.events[0].start, "screen_employer",
+        for count in office.warnings:
+            found += office_warnings(count)
+        if office.warnings:
+            found.append(("screen_employer",
                           f"{office.seconds_at_screen / 60:.0f} min de "
                           "trabajo frente a la pantalla"))
     return found
@@ -547,12 +557,16 @@ class LiveRegulation:
 
     def event(self, event: Event) -> list[Finding]:
         """The new findings of a moment of risk that just ended."""
-        return self._new(event_warnings(event))
+        return self._new(
+            [("reba_level", f"REBA {event.score}: riesgo "
+              f"{event.risk.lower()}, actuación {event.action.lower()}")]
+            + [(topic_of(kind), kind) for kind in event.kinds])
 
     def office(self, event: OfficeEvent) -> list[Finding]:
         """The new findings of a screen-work warning; the first one also
         brings the duties of the employer for screens."""
-        return self._new(office_warnings(event) + [
+        return self._new([
+            (OFFICE_TOPICS[event.kind], f"{event.title}: {event.detail}"),
             ("screen_employer", "trabajo frente a la pantalla")])
 
     def push(self, push: Push) -> list[Finding]:
@@ -569,9 +583,9 @@ class LiveRegulation:
 
 
 def describe_finding(finding: Finding) -> str:
-    """A few lines for a finding: what, how often, and where to read."""
-    times = len(finding.seen)
-    lines = [f"{finding.title} ({times} {'vez' if times == 1 else 'veces'})"]
+    """A few lines for a finding: what, what was seen, and where to
+    read."""
+    lines = [finding.title] + [f"  · {seen}" for seen in finding.seen]
     for passage in finding.passages:
         name = passage.file_path.rsplit("/", 1)[-1]
         lines.append(f"  - {name} [{passage.first_character_index}:"

@@ -67,16 +67,16 @@ class SessionConfig(BaseModel):
 def report_name(config: SessionConfig, started: datetime) -> str:
     """The file name (without ``.json``) of a session's report.
 
-    A camera is named by when it started; a video by its name, with the
-    time added when a report of that name already exists.
+    A camera is named by the day it started and a number
+    (``camera_2026-11-20_1``), never by its time; a video by its name,
+    numbered when a report of that name already exists.
     """
-    stamp = f"{started:%Y-%m-%d_%H-%M-%S}"
+    from .analysis import free_name
+
+    folder = Path(config.save_directory)
     if config.kind != "video":
-        return f"camera_{stamp}"
-    stem = Path(config.source).stem
-    if (Path(config.save_directory) / f"{stem}.json").exists():
-        return f"{stem}_{stamp}"
-    return stem
+        return free_name(folder, f"camera_{started:%Y-%m-%d}", number=True)
+    return free_name(folder, Path(config.source).stem)
 
 
 def office_snapshot(state: Any, person: int = 1

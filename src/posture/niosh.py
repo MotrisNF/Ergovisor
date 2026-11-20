@@ -92,8 +92,12 @@ class Niosh:
             ``None`` without a load, or with a limit of 0 kg (any load
             is too much: "el límite de peso recomendado será igual a
             cero", NTP 477).
-        risk: What NTP 477 says of that index; with a limit of 0 kg, an
-            "incremento acusado del riesgo" whatever the load.
+        risk: What NTP 477 says of that index; with a limit of 0 kg and
+            a load given, an "incremento acusado del riesgo". Without a
+            load there is no risk to name: NTP 477 reads the risk from
+            the index, and the video does not show whether the hands
+            held anything (raising the empty arms is a risk of posture,
+            scored by REBA, not of the load).
     """
 
     hm: float
@@ -182,8 +186,9 @@ def evaluate(h: float, v: float, d: float, a: float,
     if load_kg is not None and load_kg > 0 and limit > 0:
         index = load_kg / limit
     hm, vm, dm, am, fm, cm = factors
+    loaded = load_kg is not None and load_kg > 0
     risk = (risk_of(index) if index is not None
-            else risk_of(float("inf")) if limit <= 0 else "")
+            else risk_of(float("inf")) if limit <= 0 and loaded else "")
     return Niosh(hm=hm, vm=vm, dm=dm, am=am, fm=fm, cm=cm,
                  limit=round(limit, 2),
                  index=None if index is None else round(index, 2),

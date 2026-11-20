@@ -187,8 +187,9 @@ class TestRegulationAndWriting:
         report = pushing.report()
         assert report is not None
         text = describe_analysis({
-            "source": "x", "created": "", "summary": {}, "events": [],
-            "pushing": report.model_dump()})
+            "source": "x", "created": "", "people": [{
+                "person": 1, "summary": {}, "moments": 0,
+                "pushing": report.model_dump()}]})
         assert "Empuje y tracción de cargas" in text
         assert "La fuerza no se midió" in text
 

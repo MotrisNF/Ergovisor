@@ -2,13 +2,15 @@
 analysis of each one (``src.posture.analysis``) and the joint report
 (regulation, writer, overlay)."""
 from dataclasses import replace
+import json
+import re
 from typing import Any
 
 import numpy as np
 import pytest
 
-from src.posture.analysis import (Analysis, analyse, match_faces, people_of,
-                                  whole_body)
+from src.posture.analysis import (Analysis, _Person, analyse, match_faces,
+                                  people_of, whole_body)
 from src.posture.face import Face
 from src.posture.lifting import Lifting
 from src.posture.overlay import Overlay
@@ -111,6 +113,29 @@ class TestTracker:
         found = track(tracker, [[]] * 20 + [[0.75]], start=3.3)
         assert set(found[-1]) == {1}
 
+    def test_legs_made_up_at_a_laptop(self) -> None:
+        """At a laptop the model makes up the legs below the picture, some
+        frames seen and some not, so the box's height jumps: the person
+        keeps their number all along, not the one of someone gone (D1)."""
+        tracker = Tracker()
+        legs = {Point.LEFT_HIP, Point.RIGHT_HIP, Point.LEFT_KNEE,
+                Point.RIGHT_KNEE, Point.LEFT_ANKLE, Point.RIGHT_ANKLE,
+                Point.LEFT_HEEL, Point.RIGHT_HEEL, Point.LEFT_FOOT,
+                Point.RIGHT_FOOT}
+        found = []
+        for n in range(80):
+            second = n / FPS
+            body = Body()
+            if n % 3:
+                body.hidden = legs
+            people = [at(0.5, second, body, scale=2.0)]
+            if n < 30:
+                # Someone else seen 3 s, then gone.
+                people.append(at(0.9, second, scale=0.6))
+            found.append(set(tracker.assign(second, people)))
+        assert all(1 in frame for frame in found)
+        assert all(frame == {1} for frame in found[45:])
+
 
 class TestTakeBack:
     """Standing up from a laptop (E2): something taken for a person for an
@@ -184,6 +209,31 @@ class TestWholeBody:
         assert not whole_body(None)
 
 
+class TestNear:
+    """The body is only scored near enough to measure it (D1)."""
+
+    @staticmethod
+    def person() -> Any:
+        return _Person(1, None, None, None, None)  # type: ignore[arg-type]
+
+    def test_far_is_not_measured(self) -> None:
+        """At the end of a corridor (a quarter of the image): not."""
+        who = self.person()
+        assert not any(who.near(at(0.5, n / FPS, scale=0.4))
+                       for n in range(30))
+
+    def test_near_is_measured(self) -> None:
+        assert self.person().near(at(0.5, scale=1.0))
+
+    def test_bending_down_is_still_near(self) -> None:
+        """Smaller for a moment (bending for a lift) after being seen
+        standing near: still measured; long after, not."""
+        who = self.person()
+        assert who.near(at(0.5, 0.0, scale=1.0))
+        assert who.near(at(0.5, 2.0, scale=0.5))
+        assert not who.near(at(0.5, 20.0, scale=0.5))
+
+
 def face_at(x: float) -> Face:
     return Face(0.0, 5.0, 0.0, 0.0, 55.0, 0.0, (x, 0.3))
 
@@ -252,8 +302,8 @@ class TestAnalyseSeveral:
                          lifting=Lifting())
         assert [p.person for p in result.people] == [1, 2]
         first, second = result.people
-        assert first.events and not second.events
-        assert told == [1] * len(first.events)
+        assert first.moments and not second.moments
+        assert told == [1] * first.moments
         assert first.lifting is not None and second.lifting is not None
         assert first.seconds_seen == pytest.approx(9.9, abs=0.2)
 
@@ -310,25 +360,58 @@ class TestAnalyseSeveral:
 
 
 class TestSaved:
-    """Analyses saved before there were several people."""
+    """What is saved of an analysis: anonymous (RGPD)."""
 
-    OLD: dict[str, Any] = {
-        "source": "a.mp4", "created": "2026-11-17", "task": {},
-        "summary": {"seconds": 5.0}, "events": [], "lifting": None,
-        "office": None, "pushing": None}
-
-    def test_people_of_an_old_one(self) -> None:
-        [person] = people_of(self.OLD)
-        assert person["person"] == 1
-        assert person["summary"] == {"seconds": 5.0}
-
-    def test_loads_as_one_person(self) -> None:
-        analysis = Analysis.model_validate(self.OLD)
-        assert len(analysis.people) == 1
-        assert analysis.people[0].summary.seconds == 5.0
-
-    def test_people_of_a_new_one(self) -> None:
+    def test_people_of(self) -> None:
         assert people_of({"people": []}) == []
+        assert people_of({}) == []
+
+    def test_no_times_saved(self) -> None:
+        """Only the day and how often and how long things happened: no
+        second of the session, no time of the day."""
+        lifting = Lifting(load_kg=5)
+        result = analyse(frames(10), fake(Poses([0.2, 0.7], bending=0.2)),
+                         "test", lifting=lifting)
+        saved = json.loads(result.model_dump_json())
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", saved["created"])
+        first = saved["people"][0]
+        assert "events" not in first
+        assert first["moments"] >= 1
+        assert first["risks"] and all(
+            set(r) == {"cause", "times", "seconds", "max_score"}
+            for r in first["risks"])
+
+        def values_of(value: Any, name: str) -> list[Any]:
+            if isinstance(value, dict):
+                return ([value[name]] if name in value else []) + [
+                    x for v in value.values() for x in values_of(v, name)]
+            if isinstance(value, list):
+                return [x for v in value for x in values_of(v, name)]
+            return []
+
+        assert all(v is None for name in ("start", "end", "second")
+                   for v in values_of(saved, name))
+
+    def test_risks_counted(self) -> None:
+        """Two moments with the trunk bent over 60°, one with the arm up:
+        counted by cause, their times added, no degrees."""
+        from src.posture.analysis import count_risks
+        from src.posture.timeline import Event
+
+        def event(start: float, end: float, score: int,
+                  kinds: list[str]) -> Event:
+            return Event(start=start, end=end, score=score, level=3,
+                         risk="Alto", action="Necesaria pronto",
+                         causes=[], kinds=kinds)
+
+        found = count_risks([
+            event(0, 4, 9, ["tronco flexionado más de 60°"]),
+            event(10, 12, 10, ["tronco flexionado más de 60°",
+                               "brazo elevado 45-90°"])])
+        assert [(r.cause, r.times, r.seconds, r.max_score)
+                for r in found] == [
+            ("tronco flexionado más de 60°", 2, 6.0, 10),
+            ("brazo elevado 45-90°", 1, 2.0, 10)]
 
 
 def two_people() -> Analysis:
@@ -524,3 +607,18 @@ class TestDetector:
         detector._net = net  # type: ignore[assignment]
         detector._cells, detector._strides = _grid()
         assert detector.find(np.zeros((100, 100, 3), dtype=np.uint8)) == []
+
+
+def test_head_above_any_person_not_measured() -> None:
+    """A head higher than the tallest person over the floor: the floor
+    is made up, the frame is not measured (seated or coming in, a short
+    stature is still measured)."""
+    from src.posture.lifting import BodyHeights
+
+    body = Body().skeleton()
+    assert BodyHeights().add(body)
+    lifted = replace(body, points=body.points - [0, 1.5, 0])
+    feet = [Point.LEFT_HEEL, Point.RIGHT_HEEL, Point.LEFT_FOOT,
+            Point.RIGHT_FOOT]
+    lifted.points[feet] = body.points[feet]
+    assert not BodyHeights().add(lifted)

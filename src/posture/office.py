@@ -41,6 +41,11 @@ CLOSE_SHOULDERS = 0.28
 # The guide: the screen "en ningún caso debe estar situada a menos de
 # 300 mm"; usual office screens need 400 to 750 mm.
 MIN_DISTANCE_CM = 30.0
+# Ours: less time than this (s) with the screen's view is no screen
+# work: bending down for a box, the camera saw only the head and
+# shoulders for a second or two, and lifting videos had a "screen work"
+# section of 1 s (2026-11-20).
+MIN_AT_SCREEN = 10.0
 USUAL_DISTANCE_CM = (40.0, 75.0)
 # REBA (NTP 601): the neck scores more when bent forward more than 20°,
 # bent backward, turned or tilted to a side. The head is measured from
@@ -137,6 +142,23 @@ class OfficeEvent(BaseModel):
     detail: str
 
 
+class WarningCount(BaseModel):
+    """How often one warning of the screen work was given (not when: see
+    ``analysis.PersonAnalysis``).
+
+    Attributes:
+        kind: What it is (a key of ``TITLES``).
+        title: What it is, in words.
+        times: How many times.
+        seconds: Their time in all.
+    """
+
+    kind: Kind
+    title: str
+    times: int
+    seconds: float
+
+
 class OfficeReport(BaseModel):
     """The screen work seen, for the report.
 
@@ -156,7 +178,7 @@ class OfficeReport(BaseModel):
         longest_without_rest: Longest time without one, seconds.
         breaks: Times away from the screen of 30 s or more.
         longest_without_break: Longest time without one, seconds.
-        events: The moments against the guide, in order.
+        warnings: How often each warning of the guide was given.
         assumptions: What the measures take for granted.
     """
 
@@ -177,7 +199,7 @@ class OfficeReport(BaseModel):
     longest_without_rest: float = 0.0
     breaks: int = 0
     longest_without_break: float = 0.0
-    events: list[OfficeEvent] = []
+    warnings: list[WarningCount] = []
     assumptions: list[str] = [
         "La cámara está encima de la pantalla: su distancia es la de la "
         "pantalla y mirarla es mirar la pantalla.",
@@ -250,6 +272,7 @@ class Office:
     _views: deque[tuple[float, View]] = field(default_factory=deque)
     view: View | None = None
     _report: OfficeReport = field(default_factory=OfficeReport)
+    _events: list[OfficeEvent] = field(default_factory=list)
     _last: float | None = None
     _distances: list[float] = field(default_factory=list)
     _closed: bool = False
@@ -399,7 +422,7 @@ class Office:
                detail: str) -> OfficeEvent:
         event = OfficeEvent(kind=kind, title=TITLES[kind], start=start,
                             end=end, detail=detail)
-        self._report.events.append(event)
+        self._events.append(event)
         return event
 
     @property
@@ -434,15 +457,22 @@ class Office:
         return ended
 
     def report(self) -> OfficeReport | None:
-        """The screen work seen, or ``None`` if the camera never had the
-        screen's view."""
+        """The screen work seen, or ``None`` if the camera had the
+        screen's view less than ``MIN_AT_SCREEN``."""
         report = self._report
-        if report.seconds_at_screen <= 0:
+        if report.seconds_at_screen < MIN_AT_SCREEN:
             return None
         if self._distances:
             report.distance_cm = round(statistics.median(self._distances), 1)
             ordered = sorted(self._distances)
             report.closest_cm = round(ordered[len(ordered) // 20], 1)
+        counts: dict[str, WarningCount] = {}
+        for event in self._events:
+            count = counts.setdefault(event.kind, WarningCount(
+                kind=event.kind, title=event.title, times=0, seconds=0.0))
+            count.times += 1
+            count.seconds = round(count.seconds + event.end - event.start, 1)
+        report.warnings = list(counts.values())
         rate = self._rate()
         report.blinks_per_minute = round(rate, 1) if rate is not None else None
         report.seconds_at_screen = round(report.seconds_at_screen, 1)
