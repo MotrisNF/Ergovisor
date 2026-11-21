@@ -498,8 +498,8 @@ class WebApp:
 
     def _require_llm(self) -> Llm:
         if self._llm is None:
-            raise HTTPException(503, "La redacción con el modelo de "
-                                     "lenguaje no está activada.")
+            raise HTTPException(503, "Falta la clave de Gemini: añade "
+                                     "GEMINI_API_KEY en .env y reinicia.")
         return self._llm
 
     @staticmethod
@@ -514,6 +514,8 @@ class WebApp:
         that found nothing to report: those never spend a call to the
         model; the report can still be asked for with its button.
         """
+        if self._llm is None:
+            return
         if config.demo_cameras:
             if not self._demo_write:
                 return

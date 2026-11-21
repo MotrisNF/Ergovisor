@@ -573,18 +573,30 @@ class TestDemo:
         from src.webapp import WebApp as App
 
         app = App(manager([]), str(tmp_path), str(tmp_path), "",
-                  demo=(2, 5.0, 30.0))
+                  llm=lambda system, prompt: "", demo=(2, 5.0, 30.0))
         made = app._config("camera", "0", "x", "full")
         assert (made.demo_cameras, made.demo_countdown,
                 made.demo_seconds) == (2, 5.0, 30.0)
         app._queue_writing("nada", made)
         assert app._states["nada"] == "writing"
 
+    def test_nothing_queued_without_a_model(self, tmp_path: Path) -> None:
+        """Without a Gemini key there is no model: no report waits to be
+        written (it would only fail), and the interface is told."""
+        from src.webapp import WebApp as App
+
+        app = App(manager([]), str(tmp_path), str(tmp_path), "",
+                  demo=(2, 5.0, 30.0))
+        app._queue_writing("nada", app._config("camera", "0", "x", "full"))
+        assert "nada" not in app._states
+        assert app.llm_info()["available"] is False
+
     def test_demo_rehearsal_writes_nothing(self, tmp_path: Path) -> None:
         """With ``demo_write`` off, a demonstration spends no call."""
         from src.webapp import WebApp as App
 
         app = App(manager([]), str(tmp_path), str(tmp_path), "",
-                  demo=(2, 5.0, 30.0), demo_write=False)
+                  llm=lambda system, prompt: "", demo=(2, 5.0, 30.0),
+                  demo_write=False)
         app._queue_writing("nada", app._config("camera", "0", "x", "full"))
         assert "nada" not in app._states

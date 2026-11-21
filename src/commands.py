@@ -5,6 +5,7 @@ Every public method of ``RagCLI`` is a command:
 """
 import functools
 import inspect
+import os
 import sys
 from types import SimpleNamespace
 from collections import Counter
@@ -1282,7 +1283,7 @@ class RagCLI:
         """
         import uvicorn
         from .posture.sessions import SessionManager
-        from .posture.writer import MODELS, gemini
+        from .posture.writer import KEY_ENV, MODELS, gemini
         from .webapp import WebApp
 
         if regulation_dir and not (Path(regulation_dir)
@@ -1290,14 +1291,19 @@ class RagCLI:
             raise RagError(f"No index in '{regulation_dir}': run index "
                            "on the prevention corpus, or pass "
                            "--regulation_dir ''.")
+        # Without a key nothing can be written: the interface says so
+        # instead of failing at the first report.
+        writer = gemini(MODELS[llm]) if os.environ.get(KEY_ENV) else None
         web = WebApp(SessionManager(limit), save_directory,
                      upload_directory, regulation_dir, model,
-                     gemini(MODELS[llm]), MODELS[llm], record, screen,
+                     writer, MODELS[llm], record, screen,
                      load_kg or None, report_hours * 3600, private,
                      (demo_cameras, demo_countdown, demo_seconds)
                      if demo else None, demo_write)
-        print(f"Interface: http://127.0.0.1:{port} (reports written "
-              f"with {MODELS[llm]})", file=sys.stderr)
+        print(f"Interface: http://127.0.0.1:{port} "
+              + (f"(reports written with {MODELS[llm]})" if writer else
+                 f"(no {KEY_ENV}: the reports are not written; see "
+                 ".env-example)"), file=sys.stderr)
         if record and private:
             raise RagError("--record and --private do not go together: "
                            "private mode makes no picture of any camera.")

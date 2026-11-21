@@ -918,7 +918,7 @@ function renderWritten(name, written, writing) {
     }, 3000);
   } else {
     state = failed ? `<span class="error-inline">No se pudo generar: ${esc(writing)}</span>`
-      : llm.available ? "Sin generar" : "La generación no está activada en este servidor";
+      : llm.available ? "Sin generar" : "Sin clave de Gemini: añade GEMINI_API_KEY en .env y reinicia";
     actions = `<button class="button primary" type="button" id="write" ${llm.available ? "" : "disabled"}>
       ${failed ? "Reintentar" : "Generar"}</button>`;
     body = `<p class="muted">Informe formal (objeto, metodología, resultados, valoración, medidas preventivas y limitaciones) redactado por el modelo de lenguaje a partir de este análisis, citando la normativa encontrada.</p>`;

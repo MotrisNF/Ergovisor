@@ -86,9 +86,12 @@ enough to measure it (standing, at least 40 % of the image's height).
 
 ```console
 $ make install
-$ uv run -m src index --raw_dir data/raw/prl --index_dir data/processed/prl
+$ cp .env-example .env     # optional: the Gemini API key, for the written reports
 ```
 
+The index of the regulation is in the repository (`data/processed/prl`);
+after changing the corpus in `data/raw/prl`, build it again with
+`uv run -m src index --raw_dir data/raw/prl --index_dir data/processed/prl`.
 The pose, face and people models (6-31 MB each) are downloaded the first
 time they are used and kept in `~/.cache/rag-posture/`.
 
@@ -135,8 +138,10 @@ show (load, grip, task duration, sex and age, height, push forces).
 ### Tests
 
 ```console
-$ make test     # pytest
-$ make lint     # flake8 and mypy
+$ make test         # pytest
+$ make lint         # flake8 and mypy (make lint-strict: mypy --strict)
+$ make test_prl     # recall@5 of the regulation search on data/datasets/prl
+$ make cleandata    # removes the sessions' analyses and reports (data/output)
 ```
 
 ## Known limitations
