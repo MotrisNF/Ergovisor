@@ -150,9 +150,41 @@ $ make lint     # flake8 and mypy
 - Some REBA points cannot be seen on a skeleton (a supported arm, wrist
   twist, shoulders raised) and are never added.
 - People are numbered by where they are: when two cross or one leaves and
-  another comes in, their numbers can swap.
-- Seen side-on, the depth (towards the camera) is the least certain
-  measure: sideways bends are not scored then.
+  another comes in, their numbers can swap. People far away (under 40 %
+  of the image's height standing) are not measured.
+- The depth (towards the camera) is the least certain measure: seen
+  side-on, sideways bends are not scored; facing the camera, a forward
+  bend of the trunk under 30° is taken as upright (standing straight it
+  read 18-24°), so a real one of 20-30° is missed from the front.
+- **The pose model does not see the load.** A lift is told from how both
+  hands move together: on the calibration videos nearly every real lift
+  was found (B5 4/4, B7 8/8, 9 of 12 with a heater in F3), but about one
+  detection in three can be a movement without a load (standing up from
+  a squat). Pushes are found side-on only. An open-vocabulary object
+  detector (OWLv2) was tried to see the load and dropped: it did not
+  tell a held object from empty hands in those videos and took 8 s a
+  frame on the CPU.
+- The thresholds marked "Ours" come from about twenty calibration videos
+  of a few people, cameras and rooms
+  ([calibracion_videos.md](calibracion_videos.md)), not from a validation
+  against a prevention technician scoring REBA by hand. They can be
+  checked again after any change with `tools/calibration/`.
+- Performance: on this computer's CPU (no GPU) three cameras at once, two
+  of them IP cameras, are analysed at 10 frames a second; a 35-minute
+  session took 30 minutes on a video file.
+
+### Data protection
+
+Ergovisor minimises the data (no image or time is kept in a report, people
+are numbers, the private mode makes no picture), but it does not by
+itself make watching workers lawful: cameras at work need a legal basis,
+the workers must be told (Ley Orgánica 3/2018, art. 89, and the GDPR), and
+a data protection impact assessment is usually required. A report with
+its date and a camera named after one post can still point to the person
+who works there. The written report sends the measures (numbers and
+words, no images) to Gemini, a processor outside the EU. The interface
+has no login: it listens on this computer only and must not be exposed
+to a network as it is.
 
 ## Resources
 
