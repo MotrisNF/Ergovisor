@@ -579,3 +579,12 @@ class TestDemo:
                 made.demo_seconds) == (2, 5.0, 30.0)
         app._queue_writing("nada", made)
         assert app._states["nada"] == "writing"
+
+    def test_demo_rehearsal_writes_nothing(self, tmp_path: Path) -> None:
+        """With ``demo_write`` off, a demonstration spends no call."""
+        from src.webapp import WebApp as App
+
+        app = App(manager([]), str(tmp_path), str(tmp_path), "",
+                  demo=(2, 5.0, 30.0), demo_write=False)
+        app._queue_writing("nada", app._config("camera", "0", "x", "full"))
+        assert "nada" not in app._states

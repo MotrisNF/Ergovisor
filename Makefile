@@ -57,30 +57,42 @@ serve:
 # said so in the reports; LOAD=0 for none): make app LOAD=8
 # A session saves a report every REPORT_HOURS hours and goes on (2 by
 # default; 0: only when it ends): make app REPORT_HOURS=1
-# Private mode, no picture of any camera is made or shown, only its name
-# and that it is active (not with RECORD=1): make app PRIVATE=1
+# Private mode, the default: no picture of any camera is made or shown,
+# only its name, that it is active and what is measured. PRIVATE=0 shows
+# the pictures; RECORD=1 (calibration) needs them and turns it off:
+# make app PRIVATE=0
 # Options for `app`: APP_ARGS="--port 8080 --limit 2 --model full"
 LLM      ?= lite
 RECORD   ?= 0
 SCREEN   ?= 0
 LOAD     ?= 5
 REPORT_HOURS ?= 2
-PRIVATE  ?= 0
+PRIVATE  ?= 1
 APP_ARGS ?=
 
 # Demonstration: add two cameras; they wait for each other, start
 # together 5 s after both are ready, stop after 30 s and their reports
 # are written at once with the best model (Gemini 4 Hydrogen):
 # make demo   (DEMO_CAMERAS=2 DEMO_SECONDS=30 DEMO_COUNTDOWN=5)
+# Each run writes one report per camera: rehearse with the fast model,
+# so the best one's quota is kept for the real take:
+# make demo DEMO_LLM=lite
+DEMO_LLM       ?= hydrogen
+# The demonstration shows the pictures (to see what happens);
+# DEMO_PRIVATE=1 hides them as in normal use.
+DEMO_PRIVATE   ?= 0
 DEMO_CAMERAS   ?= 2
 DEMO_SECONDS   ?= 30
 DEMO_COUNTDOWN ?= 5
+# The reports are written at the end; to rehearse without spending
+# calls: make demo DEMO_WRITE=0 (each can still be written by its button).
+DEMO_WRITE     ?= 1
 
 demo:
-	@uv run -m src app --llm hydrogen --demo --demo_cameras $(DEMO_CAMERAS) --demo_seconds $(DEMO_SECONDS) --demo_countdown $(DEMO_COUNTDOWN) --load_kg $(LOAD) $(if $(filter 1,$(PRIVATE)),--private) $(APP_ARGS)
+	@uv run -m src app --llm $(DEMO_LLM) --demo --demo_cameras $(DEMO_CAMERAS) --demo_seconds $(DEMO_SECONDS) --demo_countdown $(DEMO_COUNTDOWN) --load_kg $(LOAD) $(if $(filter 1,$(RECORD)),--record) $(if $(filter 1,$(DEMO_PRIVATE)),--private) $(if $(filter 0,$(DEMO_WRITE)),--demo_write=False) $(APP_ARGS)
 
 app:
-	@uv run -m src app --llm $(LLM) $(if $(filter 1,$(RECORD)),--record) $(if $(filter 1,$(SCREEN)),--screen) --load_kg $(LOAD) --report_hours $(REPORT_HOURS) $(if $(filter 1,$(PRIVATE)),--private) $(APP_ARGS)
+	@uv run -m src app --llm $(LLM) $(if $(filter 1,$(RECORD)),--record) $(if $(filter 1,$(SCREEN)),--screen) --load_kg $(LOAD) --report_hours $(REPORT_HOURS) $(if $(filter 1,$(RECORD)),,$(if $(filter 1,$(PRIVATE)),--private)) $(APP_ARGS)
 
 # Each rule keeps its own mypy cache: the cache is only valid for the
 # flags that built it, so sharing one made every switch between lint and

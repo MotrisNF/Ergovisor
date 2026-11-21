@@ -231,6 +231,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
         # is up, and the time of its first frame (the clock starts there).
         began: list[float | None] = [None]
         over = [False]
+        # The REBA scores so far and how many (their mean, live: frames
+        # come at a steady pace, so it is the mean over time).
+        scored = [0.0, 0]
         offset: list[float | None] = [None]
         overlay = Overlay()
         lifting = Lifting(load_kg=config.load_kg,
@@ -248,6 +251,10 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 return False
             if offset[0] is None:
                 offset[0] = frame.timestamp
+            for seen in people:
+                if seen.reba is not None:
+                    scored[0] += seen.reba.score
+                    scored[1] += 1
             second = frame.timestamp - offset[0]
             if time.monotonic() - clocked[0] >= 0.5:
                 # The time, apart from the pictures (none in private
@@ -261,6 +268,8 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 send("office", office_snapshot(desk.office, desk.person)
                      if desk is not None else None)
                 send("people", len(people))
+                if scored[1]:
+                    send("mean", round(scored[0] / scored[1], 1))
             if config.private:
                 # Nothing of the video leaves the analysis.
                 if duration:
@@ -414,6 +423,7 @@ class SessionView(BaseModel):
         reports: The reports saved so far by the parts of a long session
             (see ``SessionConfig.report_every``), before the last one.
         private: No picture is made of it (see ``SessionConfig``).
+        mean_score: The REBA score on average so far (``None``: none).
         waiting: Demonstration mode: sessions still missing to start.
         starts_at: Demonstration mode: when it starts (epoch seconds).
         ends_at: Demonstration mode: when it stops by itself.
@@ -442,6 +452,7 @@ class SessionView(BaseModel):
     error: str | None
     reports: list[str] = []
     private: bool = False
+    mean_score: float | None = None
     waiting: int = 0
     starts_at: float | None = None
     ends_at: float | None = None
@@ -468,6 +479,7 @@ class _Session:
     office: dict[str, Any] | None = None
     office_events: list[dict[str, Any]] = field(default_factory=list)
     people: int = 0
+    mean_score: float | None = None
     reports: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     report: str | None = None
@@ -494,7 +506,8 @@ class _Session:
             office=self.office, office_events=self.office_events,
             people=self.people, warnings=self.warnings, report=self.report,
             error=self.error, reports=self.reports,
-            private=self.config.private, waiting=self.waiting,
+            private=self.config.private, mean_score=self.mean_score,
+            waiting=self.waiting,
             starts_at=self.starts_at, ends_at=self.ends_at)
 
     @property
@@ -632,6 +645,8 @@ class SessionManager:
                     self._start_together()
             elif kind == "second":
                 session.second = data
+            elif kind == "mean":
+                session.mean_score = data
             elif kind == "progress":
                 session.progress = data
             elif kind == "event":

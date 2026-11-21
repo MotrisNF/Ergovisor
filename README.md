@@ -8,10 +8,11 @@ rules. For every risk it finds, it retrieves the passage of the
 regulation or technical guide behind it, and a language model can write
 a formal report that cites those passages.
 
-In private mode (`make app PRIVATE=1`) no picture of any camera is
-made: the interface shows only each camera's name and that it is
-active, and nothing can be recorded; the video exists only in the
-memory of the analysis, frame by frame.
+By default the application runs in private mode: no picture of any
+camera is made, the interface shows only each camera's name, that it
+is active and what is measured, and nothing can be recorded; the video
+exists only in the memory of the analysis, frame by frame
+(`make app PRIVATE=0` shows the pictures).
 
 Everything runs on the computer: the video and the images never leave it,
 and nobody is recognised (people are "Persona 1", "Persona 2"...). The
@@ -98,7 +99,7 @@ $ make app                 # http://127.0.0.1:8000, this computer only
 $ make app LLM=hydrogen    # the best written report (about a minute)
 $ make app RECORD=1        # allow recording the cameras' original video
 $ make app SCREEN=1        # also analyse the work at a screen
-$ make app PRIVATE=1       # private mode: no picture of any camera
+$ make app PRIVATE=0       # show the cameras' pictures (private by default)
 $ make app REPORT_HOURS=1  # a report every hour (2 by default)
 $ make app LOAD=8          # the load assumed in the lifts (5 by default)
 $ make demo                # demonstration: two cameras start together
@@ -108,7 +109,10 @@ In the demonstration (`make demo`), each camera added opens and waits
 for the other; once both are ready they start together after 5 s, stop
 by themselves after 30 s, and each report is written at once with the
 best model (`DEMO_CAMERAS`, `DEMO_COUNTDOWN`, `DEMO_SECONDS` change it;
-`PRIVATE=1` hides the pictures).
+the demonstration shows the pictures; `DEMO_PRIVATE=1` hides them;
+`RECORD=1` lets the cameras be recorded too, to analyse the rehearsal
+again; `DEMO_WRITE=0` writes no report, to rehearse without spending
+calls).
 
 Add a camera, an IP address or a video, with a name to tell them
 apart; up to four at once, each in the background. Each one saves its

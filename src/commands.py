@@ -1219,7 +1219,8 @@ class RagCLI:
             demo: bool = False,
             demo_cameras: Annotated[int, Field(ge=1, le=16)] = 2,
             demo_countdown: Annotated[float, Field(ge=0)] = 5.0,
-            demo_seconds: Annotated[float, Field(gt=0)] = 30.0
+            demo_seconds: Annotated[float, Field(gt=0)] = 30.0,
+            demo_write: bool = True
             ) -> None:
         """Open the graphical interface: a page on this computer to
         analyse cameras and videos and read the reports, until Ctrl+C.
@@ -1275,6 +1276,9 @@ class RagCLI:
             demo_cameras: Sources that wait for each other.
             demo_countdown: Seconds from all ready to the start.
             demo_seconds: Seconds each one analyses.
+            demo_write: Write the demonstration's reports by themselves;
+                ``--demo_write=False``: not, to rehearse without spending
+                calls (each can still be written with its button).
         """
         import uvicorn
         from .posture.sessions import SessionManager
@@ -1291,7 +1295,7 @@ class RagCLI:
                      gemini(MODELS[llm]), MODELS[llm], record, screen,
                      load_kg or None, report_hours * 3600, private,
                      (demo_cameras, demo_countdown, demo_seconds)
-                     if demo else None)
+                     if demo else None, demo_write)
         print(f"Interface: http://127.0.0.1:{port} (reports written "
               f"with {MODELS[llm]})", file=sys.stderr)
         if record and private:
@@ -1306,7 +1310,9 @@ class RagCLI:
         if demo:
             print(f"Demonstration: {demo_cameras} sources start together "
                   f"{demo_countdown:g} s after all are ready and stop "
-                  f"after {demo_seconds:g} s", file=sys.stderr)
+                  f"after {demo_seconds:g} s"
+                  f"{'' if demo_write else ' (reports not written)'}",
+                  file=sys.stderr)
         if screen:
             print("Screen work analysed too", file=sys.stderr)
         uvicorn.run(web.app, host="127.0.0.1", port=port)

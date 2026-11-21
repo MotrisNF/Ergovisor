@@ -197,6 +197,7 @@ function tileHtml(s) {
         <span>Levantamientos <b class="n-lifts">0</b></span>
         <span>Empujes y arrastres <b class="n-pushes">0</b></span>
         <span>Riesgo máx. <b class="max">—</b></span>
+        <span>Riesgo medio <b class="mean">—</b></span>
         <span class="people-stat" hidden>Personas <b class="n-people">0</b></span>
       </div>
       <div class="stats office-stats" hidden></div>
@@ -241,7 +242,9 @@ function updateTile(tile, s) {
   $(".n-lifts", el).textContent = s.lifts.length;
   $(".n-pushes", el).textContent = (s.pushes || []).length;
   const worst = s.events.reduce((m, e) => (e.level > (m?.level ?? -1) ? e : m), null);
-  $(".max", el).innerHTML = worst ? badge(worst.level, `${LEVELS[worst.level]} · REBA ${worst.score}`) : "—";
+  $(".max", el).innerHTML = worst ? `${badge(worst.level)} <small class="muted">REBA ${worst.score}</small>` : "—";
+  $(".mean", el).innerHTML = s.mean_score != null
+    ? `${badge(levelOf(Math.round(s.mean_score)))} <small class="muted">REBA ${num(s.mean_score)}</small>` : "—";
   // People in the picture now; shown once there has been more than one.
   const persons = new Set([...s.events, ...s.lifts, ...(s.pushes || []), ...s.office_events]
     .map(e => e.person || 1));
@@ -269,7 +272,7 @@ function updateTile(tile, s) {
   if (tile.events !== total) {
     tile.events = total;
     const items = [
-      ...s.events.map(e => ({ start: e.start, html: `${who(e)}${badge(e.level, `REBA ${e.score}`)}
+      ...s.events.map(e => ({ start: e.start, html: `${who(e)}${badge(e.level)} <small class="muted">REBA ${e.score}</small>
         <span class="causes">${esc(e.causes.join(", ") || "postura")}</span>` })),
       ...s.office_events.map(e => ({ start: e.start, html: `${who(e)}${badge(OFFICE_LEVEL[e.kind] ?? 2, e.title)}
         <span class="causes">${esc(e.detail)}</span>` })),

@@ -177,7 +177,8 @@ class WebApp:
                  load_kg: float | None = None,
                  report_every: float = 0.0,
                  private: bool = False,
-                 demo: tuple[int, float, float] | None = None) -> None:
+                 demo: tuple[int, float, float] | None = None,
+                 demo_write: bool = True) -> None:
         """Set up the routes; nothing is analysed or written yet.
 
         Args:
@@ -208,6 +209,9 @@ class WebApp:
                 wait for each other, the countdown to start them together
                 and how long they analyse (seconds); each one's report is
                 then written at once, however short.
+            demo_write: Whether a demonstration's reports are written by
+                themselves (``app --demo_write=False``: not, to rehearse
+                without spending calls; the button still writes one).
         """
         self.sessions = sessions
         self._record = record
@@ -216,6 +220,7 @@ class WebApp:
         self._report_every = report_every
         self._private = private
         self._demo = demo
+        self._demo_write = demo_write
         self._llm = llm
         self._llm_model = llm_model
         # One document written at a time: a second click does not spend
@@ -509,8 +514,10 @@ class WebApp:
         that found nothing to report: those never spend a call to the
         model; the report can still be asked for with its button.
         """
-        if not config.demo_cameras and (config.record
-                                        or not self._worth_writing(name)):
+        if config.demo_cameras:
+            if not self._demo_write:
+                return
+        elif config.record or not self._worth_writing(name):
             return
         self._states[name] = "writing"
         self._pending.put(name)

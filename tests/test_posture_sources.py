@@ -95,7 +95,7 @@ class TestCamera:
                         warn=warnings.append)
         assert values(camera) == [1, 2, 3, 4]
         assert fake.opened == ["rtsp://u:p@h/s"] * 4
-        assert "reconnecting (1/2)" in warnings[0]
+        assert "reconectando (1/2)" in warnings[0]
         assert "p@" not in " ".join(warnings)
 
     def test_gives_up(self, fake: type[FakeCapture]) -> None:
@@ -104,7 +104,7 @@ class TestCamera:
         warnings: list[str] = []
         camera = Camera(0, reconnects=2, delay=0.01, warn=warnings.append)
         assert values(camera) == [1]
-        assert "giving up after 2 attempts" in warnings[-1]
+        assert "tras 2 intentos" in warnings[-1]
 
     def test_cannot_open(self, fake: type[FakeCapture]) -> None:
         """A camera that does not open fails at once, without the

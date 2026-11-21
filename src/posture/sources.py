@@ -55,13 +55,13 @@ class VideoFile:
         self.path = Path(path)
         self.every = every
         if not self.path.is_file():
-            raise RagError(f"Video not found: {self.path}")
+            raise RagError(f"No se encuentra el vídeo: {self.path}")
         capture = cv2.VideoCapture(str(self.path))
         opened = capture.isOpened()
         native = capture.get(cv2.CAP_PROP_FPS) if opened else 0.0
         capture.release()
         if not opened:
-            raise RagError(f"Cannot open the video: {self.path}")
+            raise RagError(f"No se puede abrir el vídeo: {self.path}")
         native = native if native > 0 else 30.0
         self.step = max(1, round(every * native))
         self.fps = native / self.step
@@ -271,7 +271,9 @@ class Camera:
         capture = self._open()
         if not capture.isOpened():
             capture.release()
-            raise RagError(f"Cannot open the {self.name}")
+            raise RagError(f"No se puede abrir la cámara ({self.name}): "
+                           "comprueba que está conectada y que no la usa "
+                           "otro programa")
         latest = _Latest()
         reader = threading.Thread(target=self._read, args=(capture, latest),
                                   daemon=True)
@@ -331,12 +333,13 @@ class Camera:
                     continue
                 capture.release()
                 if attempts == self.reconnects:
-                    self._warn(f"The {self.name} stopped; giving up after "
-                               f"{attempts} attempts.")
+                    self._warn(f"La cámara ({self.name}) se ha cortado; "
+                               f"tras {attempts} intentos se deja de "
+                               "reconectar.")
                     return
                 attempts += 1
-                self._warn(f"The {self.name} stopped; reconnecting "
-                           f"({attempts}/{self.reconnects})...")
+                self._warn(f"La cámara ({self.name}) se ha cortado; "
+                           f"reconectando ({attempts}/{self.reconnects})…")
                 if latest.stopped.wait(self.delay):
                     return
                 capture = self._open()

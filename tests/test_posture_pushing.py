@@ -94,6 +94,36 @@ class TestDetection:
         guide's methods are for both hands, ISO 11228-2; B6)."""
         assert walk(Pushing(height_cm=170), 4.0, 0.13, swing=0.15) == []
 
+    @pytest.mark.parametrize("step", [0.2, 0.3, 0.4])
+    def test_push_with_fewer_frames(self, step: float) -> None:
+        """Live, a busy computer analyses fewer frames: the same push.
+        The frames' times are rounded as a video gives them (at 0.3 s
+        apart, 0.5 * 0.6 s of speed window once missed them all)."""
+        pushing, found = Pushing(height_cm=170), []
+        for i in range(int(6 / step)):
+            second = round(4.5 + i * step, 1)
+            moving = second < 8.5
+            x = 0.2 + 0.13 * min(second - 4.5, 4.0)
+            ended = pushing.add(person(second, x),
+                                angles(20.0 if moving else 95.0), ASPECT)
+            found += [ended] if ended else []
+        assert [p.kind for p in found] == ["empuje"]
+
+    @pytest.mark.parametrize("step", [0.1, 0.2, 0.3])
+    def test_bursts_are_not_joined(self, step: float) -> None:
+        """Arms ahead for 0.3 s of every 1.1 s, the frames in between not
+        scored (as in C5), is no push, however far apart the frames: the
+        frames not scored count in the time between frames."""
+        pushing, found = Pushing(height_cm=170), []
+        for i in range(int(8 / step)):
+            second = round(i * step, 1)
+            seen = second % 1.1 < 0.35
+            ended = pushing.add(person(second, 0.2 + 0.13 * second)
+                                if seen else None,
+                                angles() if seen else None, ASPECT, second)
+            found += [ended] if ended else []
+        assert [p for p in found + [pushing.finish()] if p] == []
+
     def test_pull_backwards(self) -> None:
         """Walking backwards with the hands in front."""
         found = walk(Pushing(), 4.0, -0.13, x0=0.8)

@@ -40,6 +40,9 @@ EXPECTED: dict[str, Expected] = {
     "C4": Expected(1, 0, "a"),      # 3 real pulls (one arm)
     "C5": Expected(1, 0, ""),       # nothing to find
     "sample": Expected(1, 3, ""),   # 3 real
+    "E1": Expected(3, 7, ""),       # three people moving things freely
+    "D1": Expected(3, 4, ""),       # 35 min at a laptop, people passing:
+                                    # the 4 lifts are of passers-by
     "E2": Expected(1, 0, ""),       # standing at a laptop
     "F2": Expected(1, 1, ""),       # standing, squat, bend, arms up
     "F3": Expected(1, 11, ""),      # 12 real with a heater: 9 found

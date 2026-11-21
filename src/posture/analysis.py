@@ -449,7 +449,7 @@ def analyse(frames: Iterable[Frame], estimator: PoseEstimator,
             height, width = frame.image.shape[:2]
             push_ended(who, who.pushing.add(
                 skeleton if body else None, angles if body else None,
-                width / height if height else 1.0))
+                width / height if height else 1.0, frame.timestamp))
         if skeleton is None:
             return None
         recent = None

@@ -52,13 +52,32 @@ REACH_M = 0.20
 ELBOW_MAX = 70.0
 # Ours: moving at least this many statures a second (about 0.2 m/s).
 SPEED_STATURES = 0.12
-# Ours: the speed is measured over this many seconds.
+# Ours: the speed is measured over at least this many seconds (over
+# more when the frames come further apart), and over no more than
+# ``SPEED_STALE`` (older positions are from before a gap).
 SPEED_WINDOW = 0.5
+SPEED_STALE = 1.5
 # Ours: an episode lasts at least this long (s) and covers at least this
 # distance (m); shorter gaps than ``GAP_SECONDS`` do not split it.
 MIN_SECONDS = 1.5
 MIN_METRES = 0.5
-GAP_SECONDS = 0.6
+# (0.7: a real push of C1 has 0.6 s without the reach, someone walking
+# with the arms ahead in C5 0.8 s between two bursts.)
+GAP_SECONDS = 0.7
+# A camera analysed live gives fewer frames when the computer is busy
+# (seen on 2026-11-21: with two cameras, 0.2-0.3 s apart): a gap is at
+# least this many times the usual time between two frames, so that one
+# frame missed does not split an episode.
+GAP_FRAMES = 2.5
+# Ours: a push or a pull is one steady effort: at least this share of the
+# frames of the episode are of it. Walking with the arms ahead looks
+# like it in bursts of 0.3 s every second (C5), which fewer frames would
+# otherwise join into one.
+DENSE = 0.6
+# Times compared in seconds allow for the rounding of the frames' times.
+EPSILON = 1e-6
+# The usual time between two frames is taken over this many of them.
+INTERVALS = 30
 # REBA (NTP 601): the trunk scores more bent over 20°.
 TRUNK_BENT = 20.0
 # The twist REBA counts (as in timeline.py).
@@ -220,21 +239,38 @@ class Pushing:
     _body: BodyHeights = field(default_factory=BodyHeights)
     _first: float | None = None
     _last: float = 0.0
+    _steps_between: deque[float] = field(
+        default_factory=lambda: deque(maxlen=INTERVALS))
+
+    @property
+    def _interval(self) -> float:
+        """The usual time between two frames (0: not known yet): a low
+        quantile, as a frame missed leaves a longer step."""
+        if not self._steps_between:
+            return 0.0
+        return float(np.percentile(self._steps_between, 25))
 
     @property
     def stature_m(self) -> float:
         return (self.height_cm or 0) / 100 or STATURE_M
 
     def add(self, skeleton: Skeleton | None, angles: Angles | None,
-            aspect: float) -> Push | None:
-        """One frame (``aspect``: the image's width over its height); the
-        push or pull that just ended, if any."""
+            aspect: float, second: float | None = None) -> Push | None:
+        """One frame (``aspect``: the image's width over its height;
+        ``second``: its time, needed when there is no skeleton, so the
+        frames not scored count in the time between frames); the push or
+        pull that just ended, if any."""
+        if second is None:
+            second = skeleton.timestamp if skeleton is not None else None
+        if second is not None:
+            if self._first is None:
+                self._first = second
+            elif second > self._last:
+                self._steps_between.append(second - self._last)
+            self._last = second
         if skeleton is None or skeleton.pixels is None:
             return self._end_if_gap(self._last)
-        second = skeleton.timestamp
-        if self._first is None:
-            self._first = second
-        self._last = second
+        second = skeleton.timestamp if second is None else second
         self._body.add(skeleton)
         stature = _stature_px(skeleton)
         hips = skeleton.pixels[[Point.LEFT_HIP, Point.RIGHT_HIP]].mean(axis=0)
@@ -244,12 +280,20 @@ class Pushing:
         # stature measured vertically.
         x = float(hips[0] * aspect)
         self._track.append((second, x, stature))
-        while second - self._track[0][0] > SPEED_WINDOW:
+        # Keep the newest position at least ``SPEED_WINDOW`` old, so the
+        # speed is measured over that long however far apart the frames.
+        while (len(self._track) > 2
+               and second - self._track[1][0] >= SPEED_WINDOW):
+            self._track.popleft()
+        while second - self._track[0][0] > SPEED_STALE:
             self._track.popleft()
         reach = reaching(skeleton, angles)
         kind = self._kind(skeleton, reach)
         if kind is None:
             return self._end_if_gap(second)
+        # Frames not scored in between do not check the gap: check it
+        # before this one joins the episode.
+        ended = self._end_if_gap(second)
         spot = place(skeleton)
         left = skeleton.at(Point.LEFT_WRIST)
         right = skeleton.at(Point.RIGHT_WRIST)
@@ -260,14 +304,14 @@ class Pushing:
             angles.trunk_twist if angles else 0.0,
             abs(float(left[1] - right[1])) * 100,
             float(np.linalg.norm(left - right)) * 100))
-        return None
+        return ended
 
     def _kind(self, skeleton: Skeleton, reach: str | None) -> Kind | None:
         """Push, pull or neither, from the reach and the movement."""
         if reach is None or len(self._track) < 2:
             return None
         (t0, x0, s0), (t1, x1, s1) = self._track[0], self._track[-1]
-        if t1 - t0 < SPEED_WINDOW * 0.6:
+        if t1 - t0 < SPEED_WINDOW * 0.6 - EPSILON:
             return None
         speed = (x1 - x0) / ((s0 + s1) / 2) / (t1 - t0)
         if abs(speed) < SPEED_STATURES:
@@ -282,7 +326,9 @@ class Pushing:
 
     def _end_if_gap(self, second: float) -> Push | None:
         """Close the episode going on when it has stopped long enough."""
-        if self._steps and second - self._steps[-1].second >= GAP_SECONDS:
+        gap = max(GAP_SECONDS, GAP_FRAMES * self._interval)
+        if (self._steps
+                and second - self._steps[-1].second >= gap - EPSILON):
             return self._close()
         return None
 
@@ -290,11 +336,15 @@ class Pushing:
         steps, self._steps = self._steps, []
         if not steps:
             return None
-        duration = steps[-1].second - steps[0].second
+        # Each frame stands for the time until the next one.
+        interval = self._interval
+        duration = steps[-1].second - steps[0].second + interval
         statures = abs(steps[-1].x - steps[0].x) / (
             sum(s.stature for s in steps) / len(steps))
         metres = statures * self.stature_m
-        if duration < MIN_SECONDS or metres < MIN_METRES:
+        if duration < MIN_SECONDS - EPSILON or metres < MIN_METRES:
+            return None
+        if interval and len(steps) < DENSE * duration / interval:
             return None
         if not self._both_hands(steps):
             return None
