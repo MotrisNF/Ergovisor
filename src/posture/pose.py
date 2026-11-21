@@ -106,6 +106,16 @@ def model_path(model: Model = "full", cache: Path = CACHE) -> Path:
 # to one when there has been only one for ``SINGLE_AFTER`` seconds.
 CHECK_SECONDS = 1.0
 SINGLE_AFTER = 2.0
+# Ours: with one person, when the model finds nobody on the whole image
+# the detector is asked, and the person it sees is measured in their part
+# of the image. Dark and against a bright window, at one side of a 1080p
+# image, the model missed a person standing for 40 s of 2 minutes while
+# the detector found them (0.8-0.9); the frames it already found are not
+# touched (2026-11-20).
+CROP_WHEN_MISSED = True
+# Ours: not for someone cut by a side of the picture (coming in or
+# leaving): half a person read a trunk bent 129° in C5 (2026-11-20).
+EDGE = 0.01
 # Ours: each person's part of the image is their box widened this much
 # on each side (a share of its size), so hands and feet reaching out
 # are inside.
@@ -201,7 +211,17 @@ class PoseEstimator:
             if len(boxes) > 1:
                 self._several, self._one_since = True, None
         if not self._several:
-            return self._whole(frame, millisecond)
+            found = self._whole(frame, millisecond)
+            if found or not CROP_WHEN_MISSED:
+                return found
+            # Nobody on the whole image, but the detector may see them
+            # (see ``CROP_WHEN_MISSED``): measured in their part of it.
+            if boxes is None:
+                boxes = self._detector.find(frame.image)
+            whole = [box for box, _ in boxes
+                     if box[0] > EDGE and box[2] < 1 - EDGE]
+            return (self._each(frame, millisecond, whole[:1])
+                    if whole else [])
         if boxes is None:
             boxes = self._detector.find(frame.image)
         if len(boxes) > 1:

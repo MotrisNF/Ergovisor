@@ -38,6 +38,14 @@ ABDUCTION_MIN = 45.0
 # from 15°), facing the camera 1°; real bends facing it, 13-19° (B1, B2,
 # 2026-11-18). Not measurable, it is not scored.
 SIDE_SEEN = 0.5
+# Ours: the other way round, facing the camera the forward bend of the
+# trunk points at it: standing straight it read 18-24° facing a laptop's
+# camera and 1-3° side-on, the same posture in the same video (REBA's
+# 20° flipped it to a moment of risk, and the head, measured from the
+# trunk, to "neck extension", 2026-11-20). So, facing the camera, a bend
+# under this (forward or back) is taken as upright; larger bends show in
+# the picture too and are kept.
+FRONT_BEND_MIN = 30.0
 
 
 @dataclass(frozen=True)
@@ -180,6 +188,9 @@ def measure(skeleton: Skeleton) -> Angles | None:
     trunk_flexion = _signed(trunk, up, forward)
     # MediaPipe's x axis is the image's.
     side_seen = abs(float(lateral[0])) >= SIDE_SEEN
+    if side_seen and abs(trunk_flexion) < FRONT_BEND_MIN:
+        # Facing the camera: see ``FRONT_BEND_MIN``.
+        trunk_flexion = 0.0
     trunk_side = abs(_signed(trunk, up, lateral)) if side_seen else 0.0
     shoulder_line = _flat(p(Point.RIGHT_SHOULDER) - p(Point.LEFT_SHOULDER),
                           up)

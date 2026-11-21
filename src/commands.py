@@ -1212,7 +1212,14 @@ class RagCLI:
                 str, Field(min_length=1)] = "data/uploads",
             llm: Literal["lite", "flash", "hydrogen"] = "lite",
             record: bool = False,
-            screen: bool = False
+            screen: bool = False,
+            load_kg: Annotated[float, Field(ge=0)] = 5.0,
+            report_hours: Annotated[float, Field(ge=0)] = 2.0,
+            private: bool = False,
+            demo: bool = False,
+            demo_cameras: Annotated[int, Field(ge=1, le=16)] = 2,
+            demo_countdown: Annotated[float, Field(ge=0)] = 5.0,
+            demo_seconds: Annotated[float, Field(gt=0)] = 30.0
             ) -> None:
         """Open the graphical interface: a page on this computer to
         analyse cameras and videos and read the reports, until Ctrl+C.
@@ -1248,6 +1255,26 @@ class RagCLI:
                 distance, neck, blinks, visual rests and breaks) when a
                 camera is a laptop's. Off by default: only the body
                 (postures, lifts, pushes and pulls).
+            load_kg: The load assumed in every lift, kg, as the video
+                does not show it (5 by default, for a demonstration: the
+                reports say it was assumed); 0: not known, the lifts get
+                no lifting index.
+            report_hours: A session saves a report (written by itself,
+                like one that ends) every so many hours of analysis and
+                goes on: a camera on all day gives one every two hours;
+                0: one report when it ends.
+            private: No picture of any source is made or shown, and
+                nothing is recorded: the interface shows only each
+                source's name, that it is active and what was measured
+                (for data protection).
+            demo: Demonstration mode: each source added opens and waits
+                until there are ``demo_cameras`` ready; then they all
+                start together after ``demo_countdown`` seconds, stop by
+                themselves after ``demo_seconds`` and their reports are
+                written at once (``make demo`` uses the best model).
+            demo_cameras: Sources that wait for each other.
+            demo_countdown: Seconds from all ready to the start.
+            demo_seconds: Seconds each one analyses.
         """
         import uvicorn
         from .posture.sessions import SessionManager
@@ -1261,12 +1288,25 @@ class RagCLI:
                            "--regulation_dir ''.")
         web = WebApp(SessionManager(limit), save_directory,
                      upload_directory, regulation_dir, model,
-                     gemini(MODELS[llm]), MODELS[llm], record, screen)
+                     gemini(MODELS[llm]), MODELS[llm], record, screen,
+                     load_kg or None, report_hours * 3600, private,
+                     (demo_cameras, demo_countdown, demo_seconds)
+                     if demo else None)
         print(f"Interface: http://127.0.0.1:{port} (reports written "
               f"with {MODELS[llm]})", file=sys.stderr)
+        if record and private:
+            raise RagError("--record and --private do not go together: "
+                           "private mode makes no picture of any camera.")
         if record:
             print(f"Recording allowed: videos go to '{upload_directory}'",
                   file=sys.stderr)
+        if private:
+            print("Private mode: no picture of any source is shown",
+                  file=sys.stderr)
+        if demo:
+            print(f"Demonstration: {demo_cameras} sources start together "
+                  f"{demo_countdown:g} s after all are ready and stop "
+                  f"after {demo_seconds:g} s", file=sys.stderr)
         if screen:
             print("Screen work analysed too", file=sys.stderr)
         uvicorn.run(web.app, host="127.0.0.1", port=port)

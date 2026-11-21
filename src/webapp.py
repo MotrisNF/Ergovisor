@@ -61,6 +61,16 @@ BOUNDARY = "frame"
 SAFE_NAME = re.compile(r"[^\w.-]+")
 
 
+# The longest name a source can be given.
+NAME_LENGTH = 60
+
+
+def given_name(name: str | None) -> str:
+    """A name given to a source, cleaned: one line, single spaces, at
+    most ``NAME_LENGTH`` characters (empty: none given)."""
+    return " ".join((name or "").split())[:NAME_LENGTH]
+
+
 class NewSource(BaseModel):
     """A camera or an address to analyse.
 
@@ -71,12 +81,15 @@ class NewSource(BaseModel):
         model: Pose model.
         record: Also keep the camera's video (only when the server was
             started with recording allowed).
+        name: What to call it (several cameras are told apart by it);
+            empty: the camera's own name, or its address.
     """
 
     kind: Literal["camera", "address"]
     source: str = Field(min_length=1)
     model: Model = "full"
     record: bool = False
+    name: str = Field(default="", max_length=NAME_LENGTH)
 
 
 class Period(BaseModel):
@@ -160,7 +173,11 @@ class WebApp:
                  regulation_dir: str = "data/processed/prl",
                  model: Model = "full", llm: Llm | None = None,
                  llm_model: str = "", record: bool = False,
-                 screen: bool = False) -> None:
+                 screen: bool = False,
+                 load_kg: float | None = None,
+                 report_every: float = 0.0,
+                 private: bool = False,
+                 demo: tuple[int, float, float] | None = None) -> None:
         """Set up the routes; nothing is analysed or written yet.
 
         Args:
@@ -179,10 +196,26 @@ class WebApp:
                 off by default, so nobody can record from the interface.
             screen: Whether the work at a screen is analysed too (``app
                 --screen``); off by default: only the body.
+            load_kg: The load assumed in every lift (``app --load_kg``),
+                or ``None``.
+            report_every: Seconds after which a session saves a report
+                and goes on (``app --report_hours``); 0: one at the end.
+            private: No picture of any source is made or shown, and
+                nothing can be recorded (``app --private``): only the
+                name of each source, that it is active, and what was
+                measured.
+            demo: Demonstration mode (``app --demo``): how many sources
+                wait for each other, the countdown to start them together
+                and how long they analyse (seconds); each one's report is
+                then written at once, however short.
         """
         self.sessions = sessions
         self._record = record
         self._screen = screen
+        self._load_kg = load_kg
+        self._report_every = report_every
+        self._private = private
+        self._demo = demo
         self._llm = llm
         self._llm_model = llm_model
         # One document written at a time: a second click does not spend
@@ -253,7 +286,15 @@ class WebApp:
                              model=model,
                              regulation_dir=self._regulation_dir,
                              save_directory=str(self._reports),
-                             record=record, screen=self._screen)
+                             record=record, screen=self._screen,
+                             load_kg=self._load_kg,
+                             report_every=self._report_every,
+                             private=self._private,
+                             demo_cameras=self._demo[0] if self._demo else 0,
+                             demo_countdown=(self._demo[1] if self._demo
+                                             else 5.0),
+                             demo_seconds=(self._demo[2] if self._demo
+                                           else 30.0))
 
     def add_source(self, new: NewSource) -> SessionView:
         """Start analysing a camera of this computer or an address."""
@@ -270,9 +311,10 @@ class WebApp:
                 raise HTTPException(
                     422, "La dirección debe empezar por rtsp:// o http://.")
             label = safe_name(source).removeprefix("camera ")
+        label = given_name(new.name) or label
         record = ""
         if new.record:
-            if not self._record:
+            if not self._record or self._private:
                 raise HTTPException(403, "La grabación no está permitida "
                                          "en este servidor.")
             record = str(self._uploads / (free_name(
@@ -282,7 +324,8 @@ class WebApp:
                                                 new.model, record))
 
     async def add_video(self, request: Request, filename: str,
-                        model: Model | None = None) -> SessionView:
+                        model: Model | None = None,
+                        label: str = "") -> SessionView:
         """Keep an uploaded video (the request body) and analyse it."""
         name = SAFE_NAME.sub("_", Path(filename).name).strip("._")
         if not name:
@@ -300,7 +343,8 @@ class WebApp:
             path.unlink()
             raise HTTPException(422, "El vídeo está vacío.")
         return self.sessions.start(self._config(
-            "video", str(path), Path(filename).name, model or self._model))
+            "video", str(path), given_name(label) or Path(filename).name,
+            model or self._model))
 
     def close_session(self, session_id: str) -> SessionView:
         """Stop a session (its report is saved) or remove an ended one."""
@@ -310,7 +354,11 @@ class WebApp:
             raise HTTPException(404, "No existe esa fuente.") from None
 
     def stream(self, session_id: str) -> StreamingResponse:
-        """The live picture of a session, as MJPEG."""
+        """The live picture of a session, as MJPEG (never in private
+        mode: there is none)."""
+        if self._private:
+            raise HTTPException(403, "Modo privado: no se muestra la "
+                                     "imagen de ninguna fuente.")
         try:
             self.sessions.view(session_id)
         except KeyError:
@@ -438,7 +486,10 @@ class WebApp:
         """The model that writes, if any, and whether recording is
         allowed."""
         return {"available": self._llm is not None,
-                "model": self._llm_model, "record": self._record}
+                "model": self._llm_model,
+                "record": self._record and not self._private,
+                "private": self._private,
+                "demo": self._demo is not None}
 
     def _require_llm(self) -> Llm:
         if self._llm is None:
@@ -458,7 +509,8 @@ class WebApp:
         that found nothing to report: those never spend a call to the
         model; the report can still be asked for with its button.
         """
-        if config.record or not self._worth_writing(name):
+        if not config.demo_cameras and (config.record
+                                        or not self._worth_writing(name)):
             return
         self._states[name] = "writing"
         self._pending.put(name)

@@ -208,6 +208,24 @@ class TestWholeBody:
     def test_nobody(self) -> None:
         assert not whole_body(None)
 
+    def test_legs_out_of_the_picture_not_seen(self) -> None:
+        """Walking up to the camera the knees leave the picture and the
+        model still calls them seen: not the whole body. Ankles just
+        under the bottom edge (feet cut, as in C3) still count."""
+        from src.posture.analysis import ANKLES_BELOW
+
+        standing = at(0.5)
+        assert standing.pixels is not None and whole_body(standing)
+        legs = [Point.LEFT_KNEE, Point.RIGHT_KNEE, Point.LEFT_ANKLE,
+                Point.RIGHT_ANKLE]
+        close = standing.pixels.copy()
+        close[legs, 1] = 1.3
+        assert not whole_body(replace(standing, pixels=close))
+        cut = standing.pixels.copy()
+        cut[[Point.LEFT_ANKLE, Point.RIGHT_ANKLE], 1] = 1 + ANKLES_BELOW / 2
+        cut[[Point.LEFT_KNEE, Point.RIGHT_KNEE], 1] = 0.9
+        assert whole_body(replace(standing, pixels=cut))
+
 
 class TestNear:
     """The body is only scored near enough to measure it (D1)."""

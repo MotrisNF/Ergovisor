@@ -41,6 +41,8 @@ DEADLINES = {
 # NTP 601: REBA action level -> (risk, priority).
 REBA_LEVELS = {4: ("Muy alto", "Inmediata"), 3: ("Alto", "Alta"),
                2: ("Medio", "Media"), 1: ("Bajo", "Baja")}
+# NTP 601: the risk of each action level, in words.
+REBA_NAMES = ["inapreciable", "bajo", "medio", "alto", "muy alto"]
 # Screen-work warnings -> priority (ours: the guide's criteria are
 # recommendations whose breach builds up over the day).
 SCREEN = {"too_close": "Media", "neck_flexed": "Media",
@@ -91,8 +93,12 @@ def _postures(number: int, person: dict[str, Any]) -> list[Row]:
     # single frame, under a level that lasted).
     top = max((r["max_score"] for r in person.get("risks") or []),
               default=(person.get("summary") or {}).get("max_score", "—"))
+    summary = person.get("summary") or {}
+    mean = (f"; REBA medio {_num(summary['mean_score'])} "
+            f"({REBA_NAMES[int(summary.get('mean_level', 0))]})"
+            if summary.get("mean_score") else "")
     return [Row(number, "Posturas forzadas", "REBA (NTP 601)",
-                f"REBA máximo en esos momentos {top}; "
+                f"REBA máximo en esos momentos {top}{mean}; "
                 f"{person.get('moments', 0)} momentos de riesgo"
                 + (f": {causes}" if causes else ""),
                 f"{risk} (nivel de acción {worst})", priority)]
@@ -125,6 +131,8 @@ def _lifts(number: int, person: dict[str, Any]) -> list[Row]:
         level, priority = "Incremento moderado del riesgo", "Alta"
     else:
         level, priority = "Riesgo limitado", "Baja"
+    if lifting.get("load_assumed"):
+        level += " (con la carga supuesta)"
     result = f"{count} de {_num(load).removesuffix(',0')} kg"
     if indexes:
         result += f"; índice máximo {_num(max(indexes), 2)}"
@@ -220,7 +228,8 @@ def data_table(analysis: dict[str, Any]) -> str:
     if liftings:
         lifting = liftings[0]
         load = lifting.get("load_kg")
-        task.append(f"carga {_num(load).removesuffix(',0')} kg (indicada)"
+        given = "supuesta" if lifting.get("load_assumed") else "indicada"
+        task.append(f"carga {_num(load).removesuffix(',0')} kg ({given})"
                     if load else "carga no indicada")
         assumed = any("supuesta" in note
                       for note in lifting.get("assumptions", []))

@@ -85,10 +85,10 @@ async function draw() {
     document.getElementById("toolbar-title").textContent = "No se pudo cargar";
     return;
   }
-  document.title = title;
+  document.title = `${title} · Ergovisor`;
   document.getElementById("toolbar-title").textContent = title;
   sheet.innerHTML = `
-    <p class="doc-type">${esc(type)}</p>
+    <p class="doc-type">Ergovisor · ${esc(type)}</p>
     <h1>${esc(title)}</h1>
     ${facts(rows)}
     <div class="body">${markdown(text)}</div>

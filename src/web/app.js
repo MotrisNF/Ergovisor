@@ -4,7 +4,7 @@
 const LEVELS = ["Inapreciable", "Bajo", "Medio", "Alto", "Muy alto"];
 const KIND = { camera: "Cámara del equipo", address: "Cámara IP", video: "Vídeo" };
 const STATUS = {
-  loading: "Cargando el modelo…", running: "Analizando", saving: "Guardando el informe…",
+  loading: "Cargando el modelo…", ready: "Lista", running: "Analizando", saving: "Guardando el informe…",
   done: "Terminado", error: "Error",
 };
 // Short names of the corpus documents, by file name.
@@ -115,7 +115,7 @@ function route() {
     const on = a.dataset.tab === current || (["informe", "resumen"].includes(current) && a.dataset.tab === "informes");
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  document.title = { directo: "En directo", informes: "Informes", informe: "Informe", resumen: "Resumen" }[current];
+  document.title = `Ergovisor · ${{ directo: "En directo", informes: "Informes", informe: "Informe", resumen: "Resumen" }[current]}`;
   if (current === "informes") loadReports();
   if (current === "informe") showReport(decodeURIComponent(name));
   if (current === "resumen") showSummary(decodeURIComponent(name));
@@ -126,6 +126,48 @@ function route() {
 
 const tiles = new Map();
 const announced = new Set();
+
+// Demonstration mode: waiting for the other cameras, the countdown to
+// the start, and the time left (the server and this page share the clock).
+function demoStatus(s) {
+  const left = at => Math.max(0, Math.ceil(at - Date.now() / 1000));
+  if (s.status === "ready") {
+    if (s.starts_at) return `Empieza en ${left(s.starts_at)} s`;
+    return `Esperando a ${s.waiting} ${s.waiting === 1 ? "cámara más" : "cámaras más"}`;
+  }
+  if (s.status === "running" && s.ends_at) return `Analizando · quedan ${left(s.ends_at)} s`;
+  return null;
+}
+
+// Private mode: no picture and no detail of the people, only that the
+// source is active (what was measured goes to its report).
+function privateTileHtml(s) {
+  return `
+    <div class="tile-header">
+      <span class="dot"></span>
+      <div class="tile-title">
+        <strong title="${esc(s.label)}">${esc(s.label)}</strong>
+        <small class="status"></small>
+      </div>
+      <span class="tag">${esc(KIND[s.kind])}</span>
+      <button class="icon-button close" type="button" title="Cerrar y guardar el informe" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="tile-body private-body">
+      <p class="private-state"><b class="active-text">Activo</b> · <span class="time">00:00</span></p>
+      <p class="muted">Modo privado: la imagen no se muestra ni se guarda.</p>
+    </div>`;
+}
+
+function updatePrivateTile(tile, s) {
+  const el = tile.el;
+  $(".dot", el).className = `dot ${s.status}`;
+  $(".status", el).textContent = demoStatus(s) || STATUS[s.status] || s.status;
+  $(".active-text", el).textContent = s.status === "running" ? "Activo"
+    : s.status === "error" ? `Error: ${s.error}` : STATUS[s.status] || s.status;
+  $(".time", el).textContent = duration(s.second);
+}
 
 function tileHtml(s) {
   return `
@@ -170,9 +212,12 @@ function tileHtml(s) {
 function updateTile(tile, s) {
   const el = tile.el;
   $(".dot", el).className = `dot ${s.status}`;
-  let status = STATUS[s.status] || s.status;
+  let status = demoStatus(s) || STATUS[s.status] || s.status;
   if (s.status === "running" && s.progress != null) status += ` · ${Math.round(s.progress * 100)} %`;
   $(".status", el).textContent = status;
+  if (s.status === "ready") {
+    $(".state-text", el) && ($(".state-text", el).textContent = status);
+  }
   const img = $("img", el);
   const state = $(".state", el);
   if (s.status === "running" && !tile.streaming) {
@@ -275,26 +320,36 @@ async function pollSessions() {
     let tile = tiles.get(s.id);
     if (!tile) {
       const el = document.createElement("article");
-      el.className = "tile";
-      el.innerHTML = tileHtml(s);
+      el.className = s.private ? "tile private" : "tile";
+      el.innerHTML = s.private ? privateTileHtml(s) : tileHtml(s);
       $(".close", el).addEventListener("click", () => closeSession(s.id));
       // A click on the picture shows it full screen; another click (or
       // Esc) goes back.
       const video = $(".video", el);
-      video.title = "Clic para verla a pantalla completa";
-      video.addEventListener("click", () => {
-        if (document.fullscreenElement) document.exitFullscreen();
-        else if (!$("img", video).hidden) video.requestFullscreen?.();
-      });
+      if (video) {
+        video.title = "Clic para verla a pantalla completa";
+        video.addEventListener("click", () => {
+          if (document.fullscreenElement) document.exitFullscreen();
+          else if (!$("img", video).hidden) video.requestFullscreen?.();
+        });
+      }
       $("#sessions").append(el);
-      tile = { el, streaming: false, events: -1, findings: -1 };
+      tile = { el, streaming: false, events: -1, findings: -1, reports: 0 };
       tiles.set(s.id, tile);
     }
-    updateTile(tile, s);
+    // A long session saves a report every few hours and goes on.
+    for (const report of (s.reports || []).slice(tile.reports)) {
+      toast(`Informe de un tramo guardado: ${esc(s.label)} <a href="#/informe/${encodeURIComponent(report)}">Ver</a>`, 12000);
+      refreshReportCount();
+    }
+    tile.reports = (s.reports || []).length;
+    if (s.private) updatePrivateTile(tile, s);
+    else updateTile(tile, s);
   }
   for (const [id, tile] of tiles) {
     if (!seen.has(id) || sessions.find(s => s.id === id)?.status === "done") {
-      $("img", tile.el).src = "";
+      const img = $("img", tile.el);
+      if (img) img.src = "";
       tile.el.remove();
       tiles.delete(id);
     }
@@ -352,7 +407,7 @@ function showAddError(message) {
 function uploadVideo(file, model) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open("POST", `/api/sessions/video?filename=${encodeURIComponent(file.name)}&model=${model}`);
+    request.open("POST", `/api/sessions/video?filename=${encodeURIComponent(file.name)}&model=${model}&label=${encodeURIComponent(sourceName())}`);
     request.upload.addEventListener("progress", e => {
       if (!e.lengthComputable) return;
       $("#upload-bar").style.width = `${(e.loaded / e.total) * 100}%`;
@@ -369,6 +424,11 @@ function uploadVideo(file, model) {
   });
 }
 
+// The name given to the source, if any (otherwise the camera's own).
+function sourceName() {
+  return $("#source-name").value.trim();
+}
+
 function recordChosen() {
   return Boolean(llm.record && $("#record").checked);
 }
@@ -381,11 +441,11 @@ async function submitAdd() {
     if (kind === "camera") {
       const chosen = $("input[name=device]:checked");
       if (!chosen) throw new Error("Elige una cámara.");
-      await api("/api/sessions", { method: "POST", body: JSON.stringify({ kind, source: chosen.value, model, record: recordChosen() }) });
+      await api("/api/sessions", { method: "POST", body: JSON.stringify({ kind, source: chosen.value, model, record: recordChosen(), name: sourceName() }) });
     } else if (kind === "address") {
       const address = $("#address").value.trim();
       if (!address) throw new Error("Escribe la dirección de la cámara.");
-      await api("/api/sessions", { method: "POST", body: JSON.stringify({ kind, source: address, model, record: recordChosen() }) });
+      await api("/api/sessions", { method: "POST", body: JSON.stringify({ kind, source: address, model, record: recordChosen(), name: sourceName() }) });
     } else {
       const file = $("#file").files[0];
       if (!file) throw new Error("Elige un vídeo.");
@@ -394,6 +454,7 @@ async function submitAdd() {
     }
     $("#add-dialog").close();
     $("#address").value = "";
+    $("#source-name").value = "";
     $("#file").value = "";
     $("#file-name").textContent = "Arrastra un vídeo aquí o haz clic para elegirlo";
     location.hash = "#/directo";
@@ -661,7 +722,7 @@ function peopleTable(people) {
       <h2>Resumen por persona</h2>
       <p class="muted">Cada persona se analiza por separado; el detalle de cada una está más abajo.</p>
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Persona</th><th class="num">Tiempo</th><th>Riesgo postural máx.</th><th class="num">Momentos de riesgo</th>
+        <thead><tr><th>Persona</th><th class="num">Tiempo</th><th>Riesgo postural máx.</th><th>Riesgo postural medio</th><th class="num">Momentos de riesgo</th>
           <th class="num">Levantamientos</th><th class="num">IL máx.</th><th class="num">Empujes</th><th class="num">Avisos de pantalla</th></tr></thead>
         <tbody>${people.map(p => {
           const s = p.summary;
@@ -669,6 +730,7 @@ function peopleTable(people) {
           <td><a href="#persona-${p.person}">Persona ${p.person}</a></td>
           <td class="num">${esc(duration(Math.max(s.seconds || 0, p.office?.seconds_at_screen || 0)))}</td>
           <td>${s.max_score ? badge(s.max_level, `${LEVELS[s.max_level]} · REBA ${s.max_score}`) : "—"}</td>
+          <td>${s.mean_score ? badge(s.mean_level, `${LEVELS[s.mean_level]} · REBA ${num(s.mean_score)}`) : "—"}</td>
           <td class="num">${p.moments || 0}</td>
           <td class="num">${p.lifting?.lifts?.length || 0}</td>
           <td class="num">${maxIndex(p.lifting?.max_index, p.lifting?.beyond_limits)}</td>
@@ -692,6 +754,8 @@ function personHtml(p) {
 
     ${body ? `<div class="kpis">
       <div class="kpi"><small>Riesgo postural máximo</small><div>REBA ${s.max_score || "—"}</div>${worst}</div>
+      <div class="kpi"><small>Riesgo postural medio</small><div>REBA ${s.mean_score ? num(s.mean_score) : "—"}</div>
+        ${s.mean_score ? badge(s.mean_level) : badge(0, "Sin datos")}<small>Media del tiempo analizado</small></div>
       <div class="kpi"><small>Momentos de riesgo</small><div>${p.moments || 0}</div></div>
       <div class="kpi"><small>Levantamientos y descensos</small><div>${lifts.length}</div>
         ${lifting ? `<small>${num(lifting.lifts_per_minute)} por minuto</small>` : ""}</div>

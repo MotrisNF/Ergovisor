@@ -4,11 +4,11 @@ import threading
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 import pytest
 
 from src.exceptions import RagError
-from src.posture import sources
 from src.posture.sources import Camera, safe_name
 
 
@@ -55,7 +55,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> type[FakeCapture]:
     FakeCapture.opened = []
     FakeCapture.settings = []
     FakeCapture.pause = 0.0
-    monkeypatch.setattr(sources.cv2, "VideoCapture", FakeCapture)
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
     return FakeCapture
 
 

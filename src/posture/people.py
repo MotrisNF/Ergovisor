@@ -49,6 +49,7 @@ people in one camera (each one costs some time of the pose model).
 from dataclasses import dataclass, field
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .skeleton import MIN_VISIBILITY, Point, Skeleton
 
@@ -85,6 +86,8 @@ SPEED_SMOOTHING = 0.5
 
 
 Box = tuple[float, float, float, float]
+# A place in the image (x, y, shares of it).
+ImagePoint = NDArray[np.float64]
 
 
 def box(skeleton: Skeleton) -> Box | None:
@@ -110,7 +113,7 @@ def _overlap(a: Box, b: Box) -> float:
     return width * height / smaller if smaller > 0 else 0.0
 
 
-def _centre(place: Box) -> np.ndarray:
+def _centre(place: Box) -> ImagePoint:
     return np.array([(place[0] + place[2]) / 2, (place[1] + place[3]) / 2])
 
 
@@ -122,7 +125,7 @@ HEAD = (Point.NOSE, Point.LEFT_SHOULDER, Point.RIGHT_SHOULDER)
 NECK_TO_SHOULDERS = 1.5
 
 
-def locate(skeleton: Skeleton) -> tuple[np.ndarray, float] | None:
+def locate(skeleton: Skeleton) -> tuple[ImagePoint, float] | None:
     """Where a person is in the image and how big: the middle of their
     head and shoulders, and the width of their shoulders (0: unknown);
     ``None`` with nothing seen.
@@ -186,23 +189,23 @@ class _Known:
     (where in shares of the image a second)."""
 
     number: int
-    centre: np.ndarray
+    centre: ImagePoint
     size: float
     second: float
-    speed: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    speed: ImagePoint = field(default_factory=lambda: np.zeros(2))
     seen: float = 0.0
 
-    def expected(self, second: float) -> np.ndarray:
+    def expected(self, second: float) -> ImagePoint:
         """Where they should be now, at most ``BRIDGE`` seconds on (a
         person stopping behind someone is not followed further)."""
         ahead = min(max(0.0, second - self.second), BRIDGE)
         return np.asarray(self.centre + self.speed * ahead)
 
-    def distance(self, second: float, centre: np.ndarray) -> float:
+    def distance(self, second: float, centre: ImagePoint) -> float:
         """How far a skeleton is from where they should be."""
         return float(np.linalg.norm(centre - self.expected(second)))
 
-    def cost(self, second: float, centre: np.ndarray,
+    def cost(self, second: float, centre: ImagePoint,
              size: float) -> float:
         """How unlike them a skeleton is: how far from where they should
         be, and how different in size."""
@@ -210,7 +213,7 @@ class _Known:
                   if size > 0 and self.size > 0 else 0.0)
         return self.distance(second, centre) + SIZE_WEIGHT * unlike
 
-    def move(self, second: float, centre: np.ndarray,
+    def move(self, second: float, centre: ImagePoint,
              size: float) -> None:
         """Seen again here."""
         step = second - self.second
@@ -250,7 +253,7 @@ class Tracker:
             ``{number: skeleton}`` for each person in the frame.
         """
         found = distinct(skeletons)[:self.max_people]
-        places: list[tuple[np.ndarray, float] | None] = []
+        places: list[tuple[ImagePoint, float] | None] = []
         for skeleton in found:
             places.append(locate(skeleton))
         # (cost, skeleton, number, cost after the others): someone
@@ -303,7 +306,7 @@ class Tracker:
             given.items(), key=lambda item: item[1])}
 
     def _take_back(self, second: float, given: dict[int, int],
-                   places: list[tuple[np.ndarray, float] | None]) -> None:
+                   places: list[tuple[ImagePoint, float] | None]) -> None:
         """Give the number of someone seen long and gone (more than
         ``BRIDGE``) to whoever was barely seen, the nearest first."""
         gone = [known for known in self._known.values()

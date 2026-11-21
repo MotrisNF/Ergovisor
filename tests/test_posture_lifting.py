@@ -350,7 +350,7 @@ class TestLifting:
         def spot(v: float, h: float = 30.0) -> Place:
             return Place(second=0.0, v=v, h=h, a=0.0)
 
-        assert lifting._possible(spot(20), spot(200))
+        assert lifting._possible(spot(20), spot(150))
         assert not lifting._possible(spot(20), spot(220))
         assert not lifting._possible(spot(-20), spot(100))
         assert not lifting._possible(spot(20, h=110), spot(100))
@@ -408,3 +408,33 @@ def test_reference_kg(sex: str, age: int | None, kg: float) -> None:
 def test_up_is_up() -> None:
     """The test skeletons and the code agree on which way is up."""
     assert UP[1] == -1
+
+
+class TestDemoChoices:
+    """What the application assumes so a demonstration shows something,
+    and the empty arms raised over the head."""
+
+    def test_above_the_head_is_no_lift(self) -> None:
+        """Hands ending above the head (the empty arms raised: B3, a
+        calibration session) are not a lift; the same movement to the
+        chest is."""
+        from src.posture.lifting import NOSE_OF_STATURE
+
+        lifting = Lifting(load_kg=5)
+        lifting._body.head = 170 * NOSE_OF_STATURE
+
+        def spot(v: float) -> Place:
+            return Place(second=0.0, v=v, h=30.0, a=0.0)
+
+        assert lifting._possible(spot(70), spot(130))
+        assert not lifting._possible(spot(130), spot(185))
+        assert not lifting._possible(spot(185), spot(60))
+
+    def test_assumed_load_is_said(self) -> None:
+        report = Lifting(load_kg=5, load_assumed=True).report()
+        assert report.load_assumed
+        assert "5 kg supuesta" in report.assumptions[0]
+        given = Lifting(load_kg=5).report()
+        assert not given.load_assumed
+        assert not any("supuesta: es el valor" in a
+                       for a in given.assumptions)

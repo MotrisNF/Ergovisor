@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>En directo</title>
+  <title>Ergovisor</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f62fe'/%3E%3Ccircle cx='16' cy='8' r='3.2' fill='white'/%3E%3Cpath d='M16 12v9M10 15h12M16 21l-4 7M16 21l4 7' stroke='white' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   <header class="topbar">
+    <a class="brand" href="#/directo">Ergovisor</a>
     <nav class="tabs" aria-label="Secciones">
       <a href="#/directo" data-tab="directo">En directo <span class="count" id="live-count">0</span></a>
       <a href="#/informes" data-tab="informes">Informes <span class="count" id="report-count">0</span></a>
@@ -131,6 +132,11 @@
         </div>
       </div>
 
+      <label class="field">
+        <span>Nombre <small>(opcional)</small></span>
+        <input id="source-name" type="text" maxlength="60" autocomplete="off"
+               placeholder="Por ejemplo: Almacén, muelle 2">
+      </label>
       <label class="field">
         <span>Modelo de pose</span>
         <select id="model">

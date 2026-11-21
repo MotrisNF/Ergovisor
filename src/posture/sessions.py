@@ -9,7 +9,7 @@ the analysis drawn on it, which the interface shows live. When it ends,
 by itself (a video) or when it is closed, it saves its report like
 ``analyze`` does, and the report goes to the history.
 """
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 import multiprocessing
@@ -51,6 +51,22 @@ class SessionConfig(BaseModel):
         save_directory: Where the reports are written.
         record: For a camera or an address, a video file where its
             original picture is kept; empty: nothing is recorded.
+        report_every: Seconds of analysis after which a report is saved
+            and the analysis goes on with the next part (a camera left
+            on all day gives one report every two hours); 0: one report
+            when it ends.
+        demo_cameras: Demonstration mode: the session opens its source
+            and waits until this many sessions are ready, then they all
+            start together after ``demo_countdown`` seconds and stop by
+            themselves after ``demo_seconds`` (0: not in that mode).
+        demo_countdown: Seconds from all being ready to the start.
+        demo_seconds: Seconds each one analyses.
+        private: Never make pictures of it: nothing of the video leaves
+            the analysis (no live picture, no recording), only what was
+            measured.
+        load_kg: The load handled in the lifts, assumed for every
+            session (the video does not show it); ``None``: not known,
+            the lifts get no lifting index.
         screen: Also analyse the work at a screen (distance, neck,
             blinks, visual rests, breaks) when the camera is a laptop's;
             off, only the body is analysed (postures, lifts, pushes).
@@ -66,6 +82,12 @@ class SessionConfig(BaseModel):
     save_directory: str = "data/output/posture"
     record: str = ""
     screen: bool = False
+    load_kg: float | None = None
+    report_every: float = 0.0
+    private: bool = False
+    demo_cameras: int = 0
+    demo_countdown: float = 5.0
+    demo_seconds: float = 30.0
 
 
 def report_name(config: SessionConfig, started: datetime) -> str:
@@ -106,8 +128,43 @@ def office_snapshot(state: Any, person: int = 1
     }
 
 
+def in_parts(frames: Iterable[Any], every: float,
+             analyse_part: Callable[[Iterable[Any], float], Any],
+             save: Callable[[Any, int, bool], None],
+             stopped: Callable[[], bool]) -> None:
+    """Analyse ``frames`` in parts of ``every`` seconds of their own time
+    (0: in one), each saved as it ends.
+
+    Args:
+        frames: The frames, read once through all the parts.
+        every: Seconds of each part; 0: one part.
+        analyse_part: Analyses frames up to a time (``analyse`` with its
+            ``seconds``) and returns what it found.
+        save: Called with each part's result, its number (1, 2...) and
+            whether it is the last one.
+        stopped: Whether the session was asked to stop.
+    """
+    last: list[float | None] = [None]
+
+    def watched() -> Iterator[Any]:
+        for frame in frames:
+            last[0] = frame.timestamp
+            yield frame
+
+    stream = watched()
+    part, end = 1, every
+    while True:
+        result = analyse_part(stream, end if every > 0 else 0.0)
+        more = (every > 0 and not stopped() and last[0] is not None
+                and last[0] > end)
+        save(result, part, not more)
+        if not more:
+            return
+        part, end = part + 1, end + every
+
+
 def run_session(config: SessionConfig, messages: Any, pictures: Any,
-                stop: StopEvent) -> None:
+                stop: StopEvent, go: Any = None) -> None:
     """Analyse one source until it ends or ``stop`` is set (a process).
 
     Sends ``(kind, data)`` messages: ``status`` (``loading``,
@@ -115,7 +172,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
     ``office_event`` (each with the ``person`` it is of), ``finding``,
     ``warning``, ``progress``, ``office`` and ``people`` (the screen work
     and the people in the picture now, every second), and finally
-    ``done`` (with the report's name) or ``error``. Pictures go to
+    ``done`` (with the report's name) or ``error``; ``second``, the
+    time analysed, twice a second; in demonstration mode, ``ready`` once
+    its source is open, and it waits for ``go``. Pictures go to
     ``pictures`` as ``(jpeg bytes, second)``, dropped when the interface
     is behind.
     """
@@ -167,13 +226,34 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
             faces = FaceEstimator(people=MAX_PEOPLE)
         office = Office() if config.screen else None
         told = [0.0]
+        clocked = [0.0]
+        # When the analysis began (demonstration mode), whether its time
+        # is up, and the time of its first frame (the clock starts there).
+        began: list[float | None] = [None]
+        over = [False]
+        offset: list[float | None] = [None]
         overlay = Overlay()
-        lifting = Lifting()
+        lifting = Lifting(load_kg=config.load_kg,
+                          load_assumed=config.load_kg is not None)
         last = [0.0]
 
         def on_result(frame: Any, people: Any) -> bool:
             if stop.is_set():
                 return False
+            if (config.demo_cameras and began[0] is not None
+                    and time.monotonic() - began[0]
+                    >= config.demo_seconds):
+                # Demonstration: its time is up; saved as if closed.
+                over[0] = True
+                return False
+            if offset[0] is None:
+                offset[0] = frame.timestamp
+            second = frame.timestamp - offset[0]
+            if time.monotonic() - clocked[0] >= 0.5:
+                # The time, apart from the pictures (none in private
+                # mode).
+                clocked[0] = time.monotonic()
+                send("second", round(second, 1))
             if time.monotonic() - told[0] >= 1:
                 told[0] = time.monotonic()
                 desk = next((p for p in people if p.office is not None),
@@ -181,6 +261,11 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 send("office", office_snapshot(desk.office, desk.person)
                      if desk is not None else None)
                 send("people", len(people))
+            if config.private:
+                # Nothing of the video leaves the analysis.
+                if duration:
+                    send("progress", min(1.0, frame.timestamp / duration))
+                return True
             now = time.monotonic()
             if now - last[0] < 1 / PICTURES_PER_SECOND:
                 return True
@@ -196,7 +281,7 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if ok:
                 try:
-                    pictures.put_nowait((jpeg.tobytes(), frame.timestamp))
+                    pictures.put_nowait((jpeg.tobytes(), second))
                 except queue.Full:
                     pass
             if duration:
@@ -228,25 +313,58 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                     send("finding", finding.model_dump())
 
         send("status", "running")
-        result = analyse(frames, estimator, config.label, Task(),
-                         seconds=0.0, on_event=on_event,
-                         interruptible=True, on_result=on_result,
-                         lifting=lifting, on_lift=on_lift, office=office,
-                         faces=faces, on_office=on_office,
-                         pushing=Pushing(), on_push=on_push,
-                         max_people=MAX_PEOPLE)
-        send("status", "saving")
-        name = report_name(config, started)
         folder = Path(config.save_directory)
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{name}.json").write_text(
-            result.model_dump_json(indent=2), encoding="utf-8")
-        if live is not None:
-            report = find_regulation(result, live.retriever,
-                                     config.regulation_dir, config.k,
-                                     searched=live.searched)
-            (folder / f"{name}_regulation.json").write_text(
-                report.model_dump_json(indent=2), encoding="utf-8")
+        names: list[str] = []
+
+        def analyse_part(part_frames: Any, until: float) -> Any:
+            return analyse(part_frames, estimator, config.label, Task(),
+                           seconds=until, on_event=on_event,
+                           interruptible=True, on_result=on_result,
+                           lifting=lifting, on_lift=on_lift,
+                           office=office, faces=faces, on_office=on_office,
+                           pushing=Pushing(), on_push=on_push,
+                           max_people=MAX_PEOPLE)
+
+        def save(result: Any, part: int, final: bool) -> None:
+            if final:
+                send("status", "saving")
+            if part > 1 or not final:
+                # One of several parts: said in its source.
+                result = result.model_copy(update={
+                    "source": f"{config.label} · parte {part}"})
+            name = report_name(config, started)
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{name}.json").write_text(
+                result.model_dump_json(indent=2), encoding="utf-8")
+            if live is not None:
+                report = find_regulation(result, live.retriever,
+                                         config.regulation_dir, config.k,
+                                         searched=live.searched)
+                (folder / f"{name}_regulation.json").write_text(
+                    report.model_dump_json(indent=2), encoding="utf-8")
+            names.append(name)
+            if not final:
+                send("report", name)
+
+        stream: Iterable[Any] = frames
+        if config.demo_cameras:
+            # Open the source (its first frame), say it is ready and wait
+            # for the others; the camera keeps only its latest frame
+            # meanwhile, so nothing old is analysed after.
+            opened = iter(frames)
+            next(opened, None)
+            send("status", "ready")
+            while go is not None and not go.is_set():
+                if stop.is_set():
+                    send("error", "Se cerró antes de empezar.")
+                    return
+                go.wait(0.1)
+            send("status", "running")
+            began[0] = time.monotonic()
+            stream = opened
+        in_parts(stream, config.report_every, analyse_part, save,
+                 lambda: stop.is_set() or over[0])
+        name = names[-1]
         if config.record and Path(config.record).is_file():
             from .overlay import _to_h264
             # Playable in any player and browser.
@@ -265,7 +383,8 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
             faces.close()
 
 
-Status = Literal["loading", "running", "saving", "done", "error"]
+Status = Literal["loading", "ready", "running", "saving", "done",
+                 "error"]
 
 
 class SessionView(BaseModel):
@@ -292,6 +411,12 @@ class SessionView(BaseModel):
         people: The people in the picture now.
         warnings: Cuts and reconnections of the camera.
         report: The report's name once saved.
+        reports: The reports saved so far by the parts of a long session
+            (see ``SessionConfig.report_every``), before the last one.
+        private: No picture is made of it (see ``SessionConfig``).
+        waiting: Demonstration mode: sessions still missing to start.
+        starts_at: Demonstration mode: when it starts (epoch seconds).
+        ends_at: Demonstration mode: when it stops by itself.
         error: What went wrong.
     """
 
@@ -315,6 +440,11 @@ class SessionView(BaseModel):
     warnings: list[str]
     report: str | None
     error: str | None
+    reports: list[str] = []
+    private: bool = False
+    waiting: int = 0
+    starts_at: float | None = None
+    ends_at: float | None = None
 
 
 @dataclass
@@ -338,11 +468,18 @@ class _Session:
     office: dict[str, Any] | None = None
     office_events: list[dict[str, Any]] = field(default_factory=list)
     people: int = 0
+    reports: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     report: str | None = None
     error: str | None = None
     picture: bytes | None = None
     picture_number: int = 0
+    # Demonstration mode: set to start it, and when (epoch seconds) it
+    # starts and ends.
+    go: Any = None
+    waiting: int = 0
+    starts_at: float | None = None
+    ends_at: float | None = None
 
     def view(self) -> SessionView:
         return SessionView(
@@ -356,7 +493,9 @@ class _Session:
             findings=self.findings,
             office=self.office, office_events=self.office_events,
             people=self.people, warnings=self.warnings, report=self.report,
-            error=self.error)
+            error=self.error, reports=self.reports,
+            private=self.config.private, waiting=self.waiting,
+            starts_at=self.starts_at, ends_at=self.ends_at)
 
     @property
     def active(self) -> bool:
@@ -365,16 +504,16 @@ class _Session:
 
 # Starts a session: (config, messages, pictures, stop) -> a process-like
 # object with ``is_alive``, ``join`` and ``start``.
-Launcher = Callable[[SessionConfig, Any, Any, Any], Any]
+Launcher = Callable[[SessionConfig, Any, Any, Any, Any], Any]
 
 
 def process_launcher(config: SessionConfig, messages: Any, pictures: Any,
-                     stop: Any) -> Any:
+                     stop: Any, go: Any) -> Any:
     """Run a session in a new process (``spawn``: a clean interpreter,
     safe with the threads of the server and of the pose model)."""
     context = multiprocessing.get_context("spawn")
     return context.Process(target=run_session,
-                           args=(config, messages, pictures, stop),
+                           args=(config, messages, pictures, stop, go),
                            daemon=True)
 
 
@@ -429,13 +568,13 @@ class SessionManager:
                    and s.config.source == config.source for s in active):
                 raise RagError(f"{config.label} ya se está analizando.")
             messages, pictures = self._queue(0), self._queue(PICTURES_QUEUED)
-            stop = self._event()
-            process = self._launcher(config, messages, pictures, stop)
+            stop, go = self._event(), self._event()
+            process = self._launcher(config, messages, pictures, stop, go)
             session = _Session(
                 id=uuid.uuid4().hex[:8], config=config,
                 started=datetime.now().isoformat(timespec="seconds"),
                 process=process, messages=messages, pictures=pictures,
-                stop=stop)
+                stop=stop, go=go)
             self._sessions[session.id] = session
         process.start()
         threading.Thread(target=self._follow, args=(session,),
@@ -451,7 +590,8 @@ class SessionManager:
                 kind, data = session.messages.get(timeout=0.05)
                 got = True
                 ended = self._apply(session, kind, data) or ended
-                if kind == "done" and self.on_done is not None:
+                if (kind in ("done", "report")
+                        and self.on_done is not None):
                     self.on_done(data, session.config)
             except queue.Empty:
                 pass
@@ -488,6 +628,10 @@ class SessionManager:
         with self._lock:
             if kind == "status":
                 session.status = data
+                if data == "ready":
+                    self._start_together()
+            elif kind == "second":
+                session.second = data
             elif kind == "progress":
                 session.progress = data
             elif kind == "event":
@@ -516,6 +660,8 @@ class SessionManager:
                 session.people = data
             elif kind == "warning":
                 session.warnings.append(data)
+            elif kind == "report":
+                session.reports.append(data)
             elif kind == "done":
                 session.status, session.report = "done", data
                 if session.progress is not None:
@@ -525,6 +671,32 @@ class SessionManager:
                 session.status, session.error = "error", data
                 return True
         return False
+
+    def _start_together(self) -> None:
+        """Demonstration mode: once enough sessions are ready, start
+        them all after the countdown (called with the lock held)."""
+        ready = [s for s in self._sessions.values()
+                 if s.config.demo_cameras and s.status == "ready"
+                 and s.starts_at is None]
+        if not ready:
+            return
+        missing = ready[0].config.demo_cameras - len(ready)
+        for session in ready:
+            session.waiting = max(0, missing)
+        if missing > 0:
+            return
+        group = ready[:ready[0].config.demo_cameras]
+        config = group[0].config
+        at = time.time() + config.demo_countdown
+        for session in group:
+            session.starts_at = at
+            session.ends_at = at + config.demo_seconds
+
+        def go() -> None:
+            time.sleep(config.demo_countdown)
+            for session in group:
+                session.go.set()
+        threading.Thread(target=go, daemon=True).start()
 
     def views(self) -> list[SessionView]:
         """Every session, in the order they were added."""

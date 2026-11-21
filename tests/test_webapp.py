@@ -35,9 +35,14 @@ def fake_launcher(script: list[tuple[str, Any]], hold: bool = False) -> Any:
     waits to be stopped, like a camera, before saying it is done."""
 
     def launch(config: SessionConfig, messages: Any, pictures: Any,
-               stop: Any) -> threading.Thread:
+               stop: Any, go: Any) -> threading.Thread:
         def run() -> None:
             pictures.put((b"jpeg-1", 0.5))
+            if config.demo_cameras:
+                # Ready, and waits for the others, as a real one does.
+                messages.put(("status", "ready"))
+                if not go.wait(5):
+                    return
             for message in script:
                 messages.put(message)
             if hold:
@@ -304,6 +309,25 @@ class TestApi:
         assert got.json()["label"] == "Webcam (0)"
         assert got.json()["model"] == "full"
 
+    def test_add_with_a_name(self, client: TestClient) -> None:
+        """A name given to a source is its label, cleaned to one line;
+        empty, the camera's own."""
+        got = client.post("/api/sessions", json={
+            "kind": "camera", "source": "0",
+            "name": "  Almacén,\n muelle   2 "})
+        assert got.json()["label"] == "Almacén, muelle 2"
+        got = client.post("/api/sessions", json={
+            "kind": "address", "source": "http://a/v", "name": ""})
+        assert got.json()["label"] == "http://a/v"
+        too_long = client.post("/api/sessions", json={
+            "kind": "camera", "source": "0", "name": "x" * 61})
+        assert too_long.status_code == 422
+
+    def test_upload_with_a_name(self, client: TestClient) -> None:
+        got = client.post("/api/sessions/video?filename=a.mp4&label=Obra%201",
+                          content=b"video bytes")
+        assert got.json()["label"] == "Obra 1"
+
     def test_add_address_hides_password(self, client: TestClient) -> None:
         got = client.post("/api/sessions", json={
             "kind": "address", "source": "rtsp://admin:secret@10.0.0.5/s1"})
@@ -392,3 +416,166 @@ class TestScreenWork:
         app = WebApp(manager([]), str(tmp_path), str(tmp_path), "",
                      screen=True)
         assert app._config("camera", "0", "x", "full").screen
+
+
+def test_load_reaches_the_sessions(tmp_path: Path) -> None:
+    """The load assumed by the app (``app --load_kg``) goes to every
+    session; none by default."""
+    app = WebApp(manager([]), str(tmp_path), str(tmp_path), "", load_kg=5.0)
+    assert app._config("camera", "0", "x", "full").load_kg == 5.0
+    plain = WebApp(manager([]), str(tmp_path), str(tmp_path), "")
+    assert plain._config("camera", "0", "x", "full").load_kg is None
+
+
+class TestParts:
+    """A long session saves a report every few hours and goes on (here,
+    every 3 s of a 10 s source)."""
+
+    @staticmethod
+    def frames(seconds: float) -> list[Any]:
+        class Frame:
+            def __init__(self, timestamp: float) -> None:
+                self.timestamp = timestamp
+        return [Frame(n / 10) for n in range(int(seconds * 10))]
+
+    @staticmethod
+    def analyse_part(frames: Any, until: float) -> list[float]:
+        """Like ``analyse`` with ``seconds``: the frames up to ``until``
+        (the one past it is read, and lost, as ``analyse`` does)."""
+        seen = []
+        for frame in frames:
+            if until and frame.timestamp > until:
+                break
+            seen.append(frame.timestamp)
+        return seen
+
+    def test_every_few_seconds(self) -> None:
+        from src.posture.sessions import in_parts
+
+        saved: list[tuple[int, bool, float, float]] = []
+        in_parts(self.frames(10), 3.0, self.analyse_part,
+                 lambda part, n, final: saved.append(
+                     (n, final, part[0], part[-1])),
+                 lambda: False)
+        assert [(n, final) for n, final, _, _ in saved] == [
+            (1, False), (2, False), (3, False), (4, True)]
+        # Each part covers its own seconds, one after the other.
+        assert saved[0][2:] == (0.0, 3.0)
+        assert saved[1][3] == pytest.approx(6.0)
+        assert saved[3][3] == pytest.approx(9.9)
+
+    def test_one_part_without_period(self) -> None:
+        from src.posture.sessions import in_parts
+
+        saved: list[bool] = []
+        in_parts(self.frames(10), 0.0, self.analyse_part,
+                 lambda part, n, final: saved.append(final), lambda: False)
+        assert saved == [True]
+
+    def test_stopped_is_the_last_part(self) -> None:
+        """Stopped (the session closed) when a part ends: that part is
+        the last one, saved as the end."""
+        from src.posture.sessions import in_parts
+
+        saved: list[tuple[int, bool]] = []
+        in_parts(self.frames(10), 3.0, self.analyse_part,
+                 lambda part, n, final: saved.append((n, final)),
+                 lambda: True)
+        assert saved == [(1, True)]
+
+    def test_part_reports_are_kept_and_written(self) -> None:
+        """Each part's report is told to the interface and written by
+        itself, like a finished one."""
+        sessions = manager([("status", "running"), ("report", "parte_1"),
+                            ("report", "parte_2")])
+        written: list[str] = []
+        sessions.on_done = lambda name, config: written.append(name)
+        view = sessions.start(config())
+        wait_for(lambda: sessions.view(view.id).status == "done")
+        assert sessions.view(view.id).reports == ["parte_1", "parte_2"]
+        assert written == ["parte_1", "parte_2", "report_0"]
+
+
+class TestPrivate:
+    """Private mode: no picture of any source, nothing recorded."""
+
+    @staticmethod
+    def client(tmp_path: Path, **kwargs: Any) -> TestClient:
+        return TestClient(WebApp(manager([("status", "running")],
+                                         hold=True),
+                                 str(tmp_path), str(tmp_path), "",
+                                 **kwargs).app)
+
+    def test_no_picture(self, tmp_path: Path) -> None:
+        api = self.client(tmp_path, private=True)
+        view = api.post("/api/sessions", json={"kind": "address",
+                                               "source": "http://a/v"})
+        assert view.json()["private"] is True
+        got = api.get(f"/api/sessions/{view.json()['id']}/stream")
+        assert got.status_code == 403
+        assert api.get("/api/llm").json()["private"] is True
+
+    def test_no_recording(self, tmp_path: Path) -> None:
+        api = self.client(tmp_path, private=True, record=True)
+        assert api.get("/api/llm").json()["record"] is False
+        got = api.post("/api/sessions", json={
+            "kind": "address", "source": "http://a/v", "record": True})
+        assert got.status_code == 403
+
+    def test_settings_reach_the_sessions(self, tmp_path: Path) -> None:
+        app = WebApp(manager([]), str(tmp_path), str(tmp_path), "",
+                     report_every=7200.0, private=True)
+        made = app._config("camera", "0", "x", "full")
+        assert (made.report_every, made.private) == (7200.0, True)
+        plain = WebApp(manager([]), str(tmp_path), str(tmp_path), "")
+        made = plain._config("camera", "0", "x", "full")
+        assert (made.report_every, made.private) == (0.0, False)
+
+
+class TestDemo:
+    """Demonstration mode: the sources wait for each other and start
+    together after a countdown."""
+
+    @staticmethod
+    def demo(source: str) -> SessionConfig:
+        return SessionConfig(kind="camera", source=source,
+                             label=f"Cámara {source}", demo_cameras=2,
+                             demo_countdown=0.3, demo_seconds=30.0)
+
+    def test_wait_for_each_other(self) -> None:
+        sessions = manager([("status", "running")])
+        first = sessions.start(self.demo("0"))
+        wait_for(lambda: sessions.view(first.id).status == "ready")
+        time.sleep(0.5)
+        alone = sessions.view(first.id)
+        assert alone.status == "ready" and alone.waiting == 1
+        assert alone.starts_at is None
+        second = sessions.start(self.demo("1"))
+        wait_for(lambda: sessions.view(second.id).starts_at is not None)
+        both = [sessions.view(first.id), sessions.view(second.id)]
+        starts = both[0].starts_at
+        assert starts is not None and starts == both[1].starts_at
+        assert both[0].ends_at == pytest.approx(starts + 30.0)
+        wait_for(lambda: all(sessions.view(v.id).status == "done"
+                             for v in both))
+
+    def test_time_without_pictures(self) -> None:
+        """The time analysed comes on its own (private mode makes no
+        pictures)."""
+        sessions = manager([("status", "running"), ("second", 12.5)],
+                           hold=True)
+        view = sessions.start(config())
+        wait_for(lambda: sessions.view(view.id).second == 12.5)
+        sessions.close(view.id)
+
+    def test_demo_reports_always_written(self, tmp_path: Path) -> None:
+        """However short, a demonstration's report is written at once."""
+        from src.webapp import WebApp as App
+
+        app = App(manager([]), str(tmp_path), str(tmp_path), "",
+                  demo=(2, 5.0, 30.0))
+        made = app._config("camera", "0", "x", "full")
+        assert (made.demo_cameras, made.demo_countdown,
+                made.demo_seconds) == (2, 5.0, 30.0)
+        app._queue_writing("nada", made)
+        assert app._states["nada"] == "writing"

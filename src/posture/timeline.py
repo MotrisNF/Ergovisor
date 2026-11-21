@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel
 
 from .angles import Angles
-from .reba import SIDE_BEND, TWIST, UPRIGHT, Reba, Task, score
+from .reba import SIDE_BEND, TWIST, UPRIGHT, Reba, Task, level_of, score
 
 # REBA (NTP 601): the neck scores more flexed over 20°.
 NECK_FLEXED = 20.0
@@ -77,6 +77,10 @@ class Summary(BaseModel):
         seconds_by_level: Seconds spent at each action level, 0 to 4.
         max_score: The highest REBA score.
         max_level: Its action level.
+        mean_score: The REBA score on average over the time scored (each
+            frame weighted by how long it lasted): how the work usually
+            is, beside the worst moment.
+        mean_level: The action level of that average (rounded).
     """
 
     seconds: float = 0.0
@@ -85,6 +89,8 @@ class Summary(BaseModel):
     seconds_by_level: dict[int, float] = {}
     max_score: int = 0
     max_level: int = 0
+    mean_score: float = 0.0
+    mean_level: int = 0
 
 
 @dataclass
@@ -134,7 +140,9 @@ class Timeline:
                        "brazo izquierdo": _Rises(*ARM_RISE),
                        "brazo derecho": _Rises(*ARM_RISE)}
         self._trunk: deque[tuple[float, float]] = deque()
-        self._last: tuple[float, int] | None = None
+        # The last frame scored: when, its level and its score.
+        self._last: tuple[float, int, int] | None = None
+        self._score_seconds = 0.0
         self._open: Event | None = None
         self._last_risky = 0.0
 
@@ -189,12 +197,16 @@ class Timeline:
             if 0 < gap <= MAX_FRAME_SECONDS:
                 self.summary.seconds += gap
                 self.summary.seconds_by_level[self._last[1]] += gap
+                self._score_seconds += self._last[2] * gap
+                mean = self._score_seconds / self.summary.seconds
+                self.summary.mean_score = round(mean, 1)
+                self.summary.mean_level = level_of(round(mean))[0]
         result = None if angles is None else self._score(second, angles)
         if angles is None or result is None:
             self._last = None
             return None, self._close_if_over(second)
         self.summary.frames_with_person += 1
-        self._last = (second, result.level)
+        self._last = (second, result.level, result.score)
         if result.score > self.summary.max_score:
             self.summary.max_score = result.score
             self.summary.max_level = result.level

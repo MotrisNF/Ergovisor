@@ -6,6 +6,7 @@ landmarks: metres, centred on the hips, y down, the person facing the
 camera (forward is -z), their left on the +x side.
 """
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from src.posture.angles import measure
@@ -42,7 +43,7 @@ UPPER_BODY = [Point.NOSE, Point.LEFT_EAR, Point.RIGHT_EAR,
 HEAD = [Point.NOSE, Point.LEFT_EAR, Point.RIGHT_EAR]
 
 
-def rotation(axis: np.ndarray, degrees: float) -> np.ndarray:
+def rotation(axis: NDArray[np.float64], degrees: float) -> NDArray[np.float64]:
     """Rodrigues: turns vectors around ``axis`` by ``degrees``."""
     k = axis / np.linalg.norm(axis)
     angle = np.radians(degrees)
@@ -60,25 +61,26 @@ class Body:
                        for p, xyz in STANDING.items()}
         self.hidden: set[Point] = set()
 
-    def turn(self, points: list[Point], centre: Point | np.ndarray,
-             towards: np.ndarray, start: np.ndarray,
+    def turn(self, points: list[Point], centre: Point | NDArray[np.float64],
+             towards: NDArray[np.float64], start: NDArray[np.float64],
              degrees: float) -> "Body":
         """Turn some points around ``centre``, from ``start`` towards
         ``towards``."""
         middle = (self.points[centre] if isinstance(centre, Point)
                   else centre)
-        turn = rotation(np.cross(start, towards), degrees)
+        turn = rotation(np.asarray(np.cross(start, towards), dtype=np.float64),
+                        degrees)
         for p in points:
             self.points[p] = middle + turn @ (self.points[p] - middle)
         return self
 
     def bend_trunk(self, degrees: float,
-                   towards: np.ndarray = FORWARD) -> "Body":
+                   towards: NDArray[np.float64] = FORWARD) -> "Body":
         """Bend everything above the hips."""
         hips = (self.points[Point.LEFT_HIP] + self.points[Point.RIGHT_HIP]) / 2
         return self.turn(UPPER_BODY, hips, towards, UP, degrees)
 
-    def raise_arm(self, degrees: float, towards: np.ndarray = FORWARD,
+    def raise_arm(self, degrees: float, towards: NDArray[np.float64] = FORWARD,
                   side: str = "LEFT") -> "Body":
         """Raise one arm from hanging down."""
         names = ["ELBOW", "WRIST", "INDEX"]
@@ -133,14 +135,25 @@ class TestAngles:
 
     @pytest.mark.parametrize("degrees", [15, 30, 70])
     def test_trunk_flexion(self, degrees: float) -> None:
-        """The trunk bent forwards, measured as flexion."""
-        assert angles_of(Body().bend_trunk(degrees)).trunk == pytest.approx(
-            degrees, abs=0.5)
+        """The trunk bent forwards, seen side-on, measured as flexion."""
+        assert angles_of(Body().bend_trunk(degrees).yaw(90)).trunk == \
+            pytest.approx(degrees, abs=0.5)
 
     def test_trunk_extension(self) -> None:
         """Bent backwards: negative."""
-        assert angles_of(Body().bend_trunk(25, -FORWARD)).trunk == \
+        assert angles_of(Body().bend_trunk(25, -FORWARD).yaw(90)).trunk == \
             pytest.approx(-25, abs=0.5)
+
+    @pytest.mark.parametrize(("bend", "measured"), [
+        (20, 0), (-20, 0), (70, 70)])
+    def test_small_bends_facing_the_camera(self, bend: float,
+                                           measured: float) -> None:
+        """Facing the camera the forward bend is the depth, which the
+        model measures worst (standing straight read 18-24°): a small one
+        is taken as upright, a large one is kept (FRONT_BEND_MIN)."""
+        towards = FORWARD if bend > 0 else -FORWARD
+        assert angles_of(Body().bend_trunk(abs(bend), towards)).trunk == \
+            pytest.approx(measured, abs=0.5)
 
     def test_trunk_sideways(self) -> None:
         """Bent to one side: not flexion, a sideways bend."""
@@ -178,7 +191,7 @@ class TestAngles:
         trunk_up = rotation(np.cross(UP, FORWARD), 30) @ UP
         body.turn(HEAD, shoulders, rotation(np.cross(UP, FORWARD), 30)
                   @ FORWARD, trunk_up, 25)
-        a = angles_of(body)
+        a = angles_of(body.yaw(90))
         assert a.trunk == pytest.approx(30, abs=1)
         assert a.neck == pytest.approx(25, abs=1.5)
 

@@ -252,6 +252,11 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
             f"{summary.get('max_score', 0)} (nivel de acción "
             f"{summary.get('max_level', 0)}); un instante no es un momento "
             "de riesgo: la valoración se hace con los momentos.",
+            f"Puntuación REBA media (ponderada por el tiempo): "
+            f"{summary.get('mean_score', 0)} (nivel de acción "
+            f"{summary.get('mean_level', 0)}, riesgo "
+            f"{names[int(summary.get('mean_level', 0))]}): cómo es el "
+            "trabajo habitualmente, frente al momento peor.",
             "Tiempo en cada nivel de riesgo: " + "; ".join(
                 f"{names[int(level)]} {_percent(seconds, total)}"
                 for level, seconds in sorted(levels.items())) + ".",
@@ -278,6 +283,8 @@ def _describe_person(analysis: dict[str, Any], unmeasured: list[str]
             "## Manipulación manual de cargas (ecuación de NIOSH, NTP 477; "
             "Guía técnica del INSST)",
             "Carga: " + (f"{lifting['load_kg']} kg"
+                         + (" (supuesta: valor por defecto, no pesada)"
+                            if lifting.get("load_assumed") else "")
                          if lifting.get("load_kg") else "no indicada")
             + f"; agarre {lifting.get('grip')}; duración de la tarea "
             f"{lifting.get('duration')}; peso de referencia "

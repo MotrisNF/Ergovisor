@@ -157,6 +157,17 @@ class TestSummary:
         assert sum(summary.seconds_by_level.values()) == pytest.approx(9.9)
         assert summary.max_level >= 2
 
+    def test_mean_beside_the_max(self) -> None:
+        """Half the time upright, half stooping: the mean lies between the
+        two scores, weighted by time; the max is the stoop's."""
+        timeline, _ = TestEvents.session(
+            lambda s: stooping() if s >= 5 else Body(), 10)
+        summary = timeline.summary
+        upright = timeline.add(20.0, angles(Body(), 20.0))[0]
+        assert upright is not None
+        assert upright.score < summary.mean_score < summary.max_score
+        assert summary.mean_level <= summary.max_level
+
     def test_frames_without_person(self) -> None:
         """A frame without a skeleton counts, but not as time at a
         level."""

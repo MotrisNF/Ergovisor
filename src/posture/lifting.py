@@ -119,6 +119,13 @@ STATURE_MIN, STATURE_MAX = 140.0, 210.0
 REACH_UP = 1.25
 REACH_AHEAD = 0.6
 UNDER_FLOOR_CM = 10.0
+# Ours: a movement with the hands ending above the head is not taken for
+# a lift. Every one seen was the empty arms raised (B3, and an exercise
+# of a calibration session, 2026-11-20: 183-185 cm, the nose at 150-156),
+# which read a limit of 0 kg and an "incremento acusado del riesgo";
+# the real lifts of every video ended at 115 cm at most. Loads should
+# never be lifted there (INSST guide), so a real one is rare; the arm
+# raised over 90° is still scored as a posture (REBA).
 
 # INSST guide 2024, table 2 (from ISO 11228-1): heaviest load in ideal
 # conditions, kg, by sex and age.
@@ -192,6 +199,8 @@ class LiftingReport(BaseModel):
         load_kg: The load given by the person.
         grip: How good the grip is.
         duration: How long the task lasts, as NIOSH counts it.
+        load_assumed: The load is not the person's, but a value the
+            application assumes (its default, for a demonstration).
         lifts_per_minute: The frequency used (counted, or given).
         reference_kg: The INSST guide's heaviest load for the person.
         lifts: Every lift and lowering, in order, without when.
@@ -212,6 +221,7 @@ class LiftingReport(BaseModel):
     load_kg: float | None
     grip: str
     duration: str
+    load_assumed: bool = False
     lifts_per_minute: float
     reference_kg: float
     lifts: list[Lift]
@@ -321,6 +331,8 @@ class Lifting:
 
     Attributes:
         load_kg: The load handled, or ``None`` if not given.
+        load_assumed: That load was not given by the person but assumed
+            (the application's default); the report says so.
         grip: How good the grip on it is.
         duration: How long the task lasts.
         duration_assumed: The duration was not given: ``corta`` is
@@ -336,6 +348,7 @@ class Lifting:
     """
 
     load_kg: float | None = None
+    load_assumed: bool = False
     grip: Grip = "bueno"
     duration: Duration = "corta"
     duration_assumed: bool = True
@@ -596,6 +609,8 @@ class Lifting:
         person's stature (see ``REACH_UP``), at the model's scale."""
         if not self._body.possible:
             return False
+        if max(start.v, end.v) > self._body.head:
+            return False
         stature = self._body.stature
         return all(-UNDER_FLOOR_CM <= spot.v <= REACH_UP * stature
                    and spot.h <= REACH_AHEAD * stature
@@ -719,6 +734,13 @@ class Lifting:
             "Las distancias salen del esqueleto en 3D y tienen un error de "
             "varios centímetros.",
         ]
+        if self.load_kg and self.load_assumed:
+            load = f"{self.load_kg:g}".replace(".", ",")
+            assumptions.insert(0, (
+                f"Carga de {load} kg supuesta: es el valor por defecto de la "
+                "aplicación, no se pesó. Los límites de peso no dependen de "
+                "ella, pero el índice de levantamiento sí: debe recalcularse "
+                "con el peso real."))
         if not self.lifts_per_minute:
             assumptions.append("Frecuencia contada en el vídeo, que se "
                                "supone representativo de la tarea.")
@@ -727,7 +749,8 @@ class Lifting:
                 "Sin la estatura real de la persona, las distancias usan la "
                 "escala que estima el modelo, que puede errar un 10 % o más.")
         return LiftingReport(
-            load_kg=self.load_kg, grip=self.grip, duration=self.duration,
+            load_kg=self.load_kg, load_assumed=self.load_assumed,
+            grip=self.grip, duration=self.duration,
             lifts_per_minute=round(rate, 2), reference_kg=self.reference_kg,
             lifts=lifts, max_index=max(indexes) if indexes else None,
             beyond_limits=sum(lift.beyond_limits for lift in lifts),

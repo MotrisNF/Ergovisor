@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import BaseModel
 
 from .angles import Angles, measure
@@ -63,6 +64,13 @@ LIFT_SHOWN = 5.0
 # (C2, C3, C4: lowerings 0.2-1.0 s before or after the push or pull,
 # 2026-11-18).
 NEAR_PUSH = 1.5
+# Ours: a point this far out of the picture (a share of it) still
+# counts as in it; the ankles, this far below it: with the feet just cut
+# by the bottom edge the model places them well (the pulls of C3, ankles
+# at up to 1.19 of the image's height, were all measured), while walking
+# up to the camera the knees leave the picture first (2026-11-20).
+INSIDE = 0.02
+ANKLES_BELOW = 0.2
 # A face is a person's when it is this close (share of the image) to
 # their nose.
 FACE_NEAR = 0.15
@@ -196,14 +204,34 @@ def whole_body(skeleton: Skeleton | None) -> bool:
     camera) the model makes up the rest of the body: standing up from a
     laptop it read the trunk flexed 66-77° (REBA 10-11) and seven lifts
     in a session where the person only sat (calibrated on 2026-11-18).
+    And it may go on calling them seen: a point out of the picture is
+    not seen, whatever the model says (walking up to the camera, the
+    knees were "bent" at made-up places, 2026-11-20; see ``INSIDE``).
     """
-    return skeleton is not None and skeleton.seen(
-        Point.LEFT_HIP, Point.RIGHT_HIP) and (
-        skeleton.seen(Point.LEFT_KNEE, Point.LEFT_ANKLE)
-        or skeleton.seen(Point.RIGHT_KNEE, Point.RIGHT_ANKLE))
+    if skeleton is None:
+        return False
+
+    def seen(*points: Point) -> bool:
+        return skeleton.seen(*points) and all(
+            _inside(skeleton, point) for point in points)
+
+    return seen(Point.LEFT_HIP, Point.RIGHT_HIP) and (
+        seen(Point.LEFT_KNEE, Point.LEFT_ANKLE)
+        or seen(Point.RIGHT_KNEE, Point.RIGHT_ANKLE))
 
 
-def _nose(skeleton: Skeleton) -> np.ndarray | None:
+def _inside(skeleton: Skeleton, point: Point) -> bool:
+    """Whether a point is in the picture (see ``INSIDE``); without the
+    picture's positions, assumed so."""
+    if skeleton.pixels is None:
+        return True
+    x, y = (float(v) for v in skeleton.pixels[point])
+    below = (ANKLES_BELOW if point in (Point.LEFT_ANKLE, Point.RIGHT_ANKLE)
+             else INSIDE)
+    return -INSIDE <= x <= 1 + INSIDE and -INSIDE <= y <= 1 + below
+
+
+def _nose(skeleton: Skeleton) -> NDArray[np.float64] | None:
     """Where the nose is in the image (0-1)."""
     if skeleton.pixels is None:
         return None

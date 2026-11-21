@@ -1,12 +1,17 @@
 *This project has been created as part of the 42 curriculum by saperez-.*
 
-# RAG against the machine: workplace ergonomics from video
+# Ergovisor: workplace ergonomics from video
 
-The system watches people working, from a video file or a live camera,
+Ergovisor watches people working, from a video file or a live camera,
 and checks their work against the Spanish occupational risk prevention
 rules. For every risk it finds, it retrieves the passage of the
 regulation or technical guide behind it, and a language model can write
 a formal report that cites those passages.
+
+In private mode (`make app PRIVATE=1`) no picture of any camera is
+made: the interface shows only each camera's name and that it is
+active, and nothing can be recorded; the video exists only in the
+memory of the analysis, frame by frame.
 
 Everything runs on the computer: the video and the images never leave it,
 and nobody is recognised (people are "Persona 1", "Persona 2"...). The
@@ -16,9 +21,9 @@ time, and how often and how long each thing happened, never when (no
 timeline, no second of the session). Only the optional written report
 sends those measures (numbers and words, no images) to Gemini.
 
-The documentation of the original RAG project (the vLLM question
-answering system this one started from) is in
-[original_docs/](original_docs/README.md).
+Ergovisor grew out of the 42 project *RAG against the machine*: the
+documentation of that original RAG project (the vLLM question answering
+system this one started from) is in [original_docs/](original_docs/README.md).
 
 ## Description
 
@@ -93,12 +98,24 @@ $ make app                 # http://127.0.0.1:8000, this computer only
 $ make app LLM=hydrogen    # the best written report (about a minute)
 $ make app RECORD=1        # allow recording the cameras' original video
 $ make app SCREEN=1        # also analyse the work at a screen
+$ make app PRIVATE=1       # private mode: no picture of any camera
+$ make app REPORT_HOURS=1  # a report every hour (2 by default)
+$ make app LOAD=8          # the load assumed in the lifts (5 by default)
+$ make demo                # demonstration: two cameras start together
 ```
 
-Add a camera, an IP address or a video; up to four at once, each in the
-background. Each one saves its report when it ends; the reports, their
-regulation, the written report (.docx or printed) and the summaries of a
-period are in "Informes".
+In the demonstration (`make demo`), each camera added opens and waits
+for the other; once both are ready they start together after 5 s, stop
+by themselves after 30 s, and each report is written at once with the
+best model (`DEMO_CAMERAS`, `DEMO_COUNTDOWN`, `DEMO_SECONDS` change it;
+`PRIVATE=1` hides the pictures).
+
+Add a camera, an IP address or a video, with a name to tell them
+apart; up to four at once, each in the background. Each one saves its
+report when it ends, and a long one every two hours as well (the
+analysis goes on: a camera left on all day gives one report for each
+two hours). The reports, their regulation, the written report (.docx or
+printed) and the summaries of a period are in "Informes".
 
 ### Command line
 
