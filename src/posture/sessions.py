@@ -16,6 +16,7 @@ import multiprocessing
 from multiprocessing.synchronize import Event as StopEvent
 from pathlib import Path
 import queue
+import signal
 import threading
 import time
 from typing import Any, Literal
@@ -163,6 +164,14 @@ def in_parts(frames: Iterable[Any], every: float,
         part, end = part + 1, end + every
 
 
+def _close(frames: Iterator[Any] | None) -> None:
+    """Stop reading frames (a camera's reader ends and its recording is
+    finished); nothing if they are not a generator, or already closed."""
+    close = getattr(frames, "close", None)
+    if close is not None:
+        close()
+
+
 def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 stop: StopEvent, go: Any = None) -> None:
     """Analyse one source until it ends or ``stop`` is set (a process).
@@ -197,6 +206,7 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
         messages.put((kind, data))
 
     estimator = faces = None
+    reading: Iterator[Any] | None = None
     try:
         send("status", "loading")
         started = datetime.now()
@@ -355,13 +365,14 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
             if not final:
                 send("report", name)
 
-        stream: Iterable[Any] = frames
+        # Kept to be closed: closing it stops the camera's reader and
+        # finishes its recording, before the recording is converted.
+        reading = iter(frames)
         if config.demo_cameras:
             # Open the source (its first frame), say it is ready and wait
             # for the others; the camera keeps only its latest frame
             # meanwhile, so nothing old is analysed after.
-            opened = iter(frames)
-            next(opened, None)
+            next(reading, None)
             send("status", "ready")
             while go is not None and not go.is_set():
                 if stop.is_set():
@@ -370,9 +381,9 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
                 go.wait(0.1)
             send("status", "running")
             began[0] = time.monotonic()
-            stream = opened
-        in_parts(stream, config.report_every, analyse_part, save,
+        in_parts(reading, config.report_every, analyse_part, save,
                  lambda: stop.is_set() or over[0])
+        _close(reading)
         name = names[-1]
         if config.record and Path(config.record).is_file():
             from .overlay import _to_h264
@@ -386,6 +397,7 @@ def run_session(config: SessionConfig, messages: Any, pictures: Any,
     except Exception as error:  # noqa: BLE001 - shown in the interface
         send("error", f"{type(error).__name__}: {error}")
     finally:
+        _close(reading)
         if estimator is not None:
             estimator.close()
         if faces is not None:
@@ -520,12 +532,24 @@ class _Session:
 Launcher = Callable[[SessionConfig, Any, Any, Any, Any], Any]
 
 
+def _run_in_process(config: SessionConfig, messages: Any, pictures: Any,
+                    stop: Any, go: Any) -> None:
+    """``run_session`` in its own process, deaf to Ctrl+C.
+
+    The terminal sends Ctrl+C to every process of the application; a
+    session cut by it would end without saving. The server stops the
+    sessions itself (``stop``) and waits for their reports.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    run_session(config, messages, pictures, stop, go)
+
+
 def process_launcher(config: SessionConfig, messages: Any, pictures: Any,
                      stop: Any, go: Any) -> Any:
     """Run a session in a new process (``spawn``: a clean interpreter,
     safe with the threads of the server and of the pose model)."""
     context = multiprocessing.get_context("spawn")
-    return context.Process(target=run_session,
+    return context.Process(target=_run_in_process,
                            args=(config, messages, pictures, stop, go),
                            daemon=True)
 

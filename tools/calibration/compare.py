@@ -41,11 +41,17 @@ EXPECTED: dict[str, Expected] = {
     "C5": Expected(1, 0, ""),       # nothing to find
     "sample": Expected(1, 3, ""),   # 3 real
     "E1": Expected(3, 7, ""),       # three people moving things freely
-    "D1": Expected(3, 4, ""),       # 35 min at a laptop, people passing:
-                                    # the 4 lifts are of passers-by
+    "D1": Expected(3, 3, ""),       # 35 min at a laptop, people passing:
+                                    # the 3 lifts are of passers-by
     "E2": Expected(1, 0, ""),       # standing at a laptop
     "F2": Expected(1, 1, ""),       # standing, squat, bend, arms up
     "F3": Expected(1, 11, ""),      # 12 real with a heater: 9 found
+    # The demonstration, two cameras at once: a box lifted and set down
+    # twice, a chair pulled, pushed across the picture and pulled back.
+    "G1": Expected(1, 4, "aea"),    # side camera: all of it
+    "G2": Expected(1, 4, "ea"),     # front: the first pull comes at it
+    "G3": Expected(1, 4, "ea"),     # again (the end cut by the 30 s)
+    "G4": Expected(1, 4, "ea"),
 }
 
 

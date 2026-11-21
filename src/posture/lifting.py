@@ -31,7 +31,10 @@ after leaving it) by their pattern: every time the hands go down to a
 low point the load is handled once there, picked up (the way up carries
 it) or left (the way down does). Of the two, the one that rises higher
 is kept; both are kept when both rise clearly above the hanging hands
-(leaving a load on a low shelf and taking it again). A movement that
+and the hands stayed low a while (leaving a load on a low shelf and
+taking it again); without that pause, only the way down: the load was
+left and the hands rose empty to something else (to the back of a
+chair, 2026-11-21). A movement that
 rises clearly above the hanging hands, or with the hands held together,
 is a loaded one. Every movement kept counts as handling the load given
 by the person; this is said in the report.
@@ -67,6 +70,11 @@ REVERSAL_CM = 10.0
 # at the waist is neither, so this only decides between two movements
 # around the same low point (see the module).
 LOADED_ABOVE_CM = 15.0
+# Ours, to calibrate: the hands staying at a low point at least this long
+# (s), within this much of it (cm), leave a load and take it again;
+# leaving it and standing up empty is quicker.
+LOW_PAUSE = 0.8
+LOW_BAND_CM = 10.0
 HANDS_TOGETHER_CM = 25.0
 # A lift is made with both hands holding the load: the NIOSH equation
 # "no está diseñada para evaluar tareas en las que la carga se levante con
@@ -385,7 +393,7 @@ class Lifting:
 
     def add(self, skeleton: Skeleton | None) -> list[Lift]:
         """One frame; the lifts that just ended (usually none or one;
-        two when a load is left low and taken again)."""
+        at most one)."""
         if skeleton is None:
             return []
         self._body.add(skeleton)
@@ -547,17 +555,34 @@ class Lifting:
         candidates = [(m, high) for m, high in ((down, before), (up, after))
                       if m is not None and high is not None
                       and abs(m[1].v - m[0].v) * k >= D_MIN
-                      and self._both_hands(*m)]
+                      and self._both_hands(*m) and self._possible(*m)]
         if not candidates:
             return []
         clear = [m for m, high in candidates if self._clearly(high)]
-        if len(clear) == 2:
-            return clear
+        if len(clear) == 2 and self._low_pause(low[0]) < LOW_PAUSE:
+            # Left and the hands up at once, empty: the way down only.
+            return clear[:1]
         if clear:
             return clear
         # Neither rises clearly (a box carried at the waist): the higher.
         best = max(candidates, key=lambda c: (c[1][0].v, c[0] is up))
         return [best[0]]
+
+    def _low_pause(self, low: Place) -> float:
+        """How long the hands stayed at a low point (within
+        ``LOW_BAND_CM`` of it), seconds."""
+        near = [abs((left + right) / 2 - low.v) <= LOW_BAND_CM
+                for _, left, right, _ in self._hands]
+        times = [t for t, _, _, _ in self._hands]
+        if not times:
+            return 0.0
+        at = min(range(len(times)), key=lambda n: abs(times[n] - _when(low)))
+        first = last = at
+        while first > 0 and near[first - 1]:
+            first -= 1
+        while last < len(times) - 1 and near[last + 1]:
+            last += 1
+        return times[last] - times[first]
 
     def _clearly(self, high: tuple[Place, bool]) -> bool:
         """Whether a movement's high end shows the load: well above the

@@ -124,6 +124,43 @@ class TestDetection:
             found += [ended] if ended else []
         assert [p for p in found + [pushing.finish()] if p] == []
 
+    @pytest.mark.parametrize(("offset", "kind"), [(0.06, "empuje"),
+                                                  (-0.06, "arrastre")])
+    def test_hands_ahead_or_behind_decide(self, offset: float,
+                                          kind: str) -> None:
+        """Facing the camera, where the person faces is noise: the hands
+        ahead of the movement in the image push, behind it pull, whatever
+        the 3D front says (pushes were taken for pulls, 2026-11-21)."""
+        pushing, found = Pushing(height_cm=170), []
+        second, x = 0.0, 0.2
+        for _ in range(55):
+            seen = person(second, x)
+            assert seen.pixels is not None
+            if second < 4.0:
+                for wrist in (Point.LEFT_WRIST, Point.RIGHT_WRIST):
+                    seen.pixels[wrist] = (x + offset, 0.45)
+            ended = pushing.add(seen, angles(20.0 if second < 4.0 else 95.0),
+                                ASPECT)
+            found += [ended] if ended else []
+            second, x = second + 0.1, x + (0.013 if second < 4.0 else 0.0)
+        assert [p.kind for p in found] == [kind]
+
+    def test_pushed_away_and_pulled_back(self) -> None:
+        """Pushing a chair away and pulling it back without a stop: two
+        episodes, not one that went nowhere (2026-11-21)."""
+        pushing, found = Pushing(height_cm=170), []
+        second, x = 0.0, 0.2
+        for n in range(80):
+            way = 1.0 if n < 30 else -1.0 if n < 60 else 0.0
+            seen = person(second, x)
+            assert seen.pixels is not None
+            for wrist in (Point.LEFT_WRIST, Point.RIGHT_WRIST):
+                seen.pixels[wrist] = (x + 0.06, 0.45)
+            ended = pushing.add(seen, angles(20.0 if way else 95.0), ASPECT)
+            found += [ended] if ended else []
+            second, x = second + 0.1, x + 0.013 * way
+        assert [p.kind for p in found] == ["empuje", "arrastre"]
+
     def test_pull_backwards(self) -> None:
         """Walking backwards with the hands in front."""
         found = walk(Pushing(), 4.0, -0.13, x0=0.8)

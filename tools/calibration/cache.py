@@ -42,6 +42,10 @@ VIDEOS: dict[str, str] = {
     "D1": "data/uploads/grabacion_2026-11-18_15-02-54.mp4",
     "F2": "data/uploads/grabacion_2026-11-20_2.mp4",
     "F3": "data/uploads/grabacion_2026-11-20_3.mp4",
+    "G1": "data/uploads/grabacion_2026-11-21_5.mp4",
+    "G2": "data/uploads/grabacion_2026-11-21_6.mp4",
+    "G3": "data/uploads/grabacion_2026-11-21_8.mp4",
+    "G4": "data/uploads/grabacion_2026-11-21_7.mp4",
 }
 # Seconds between two analysed frames, as the application.
 EVERY = 0.1

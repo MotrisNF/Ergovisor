@@ -47,6 +47,10 @@ FORCE_UNKNOWN = FORCE_LIMITS["mujer"]
 # Ours: the hands at least this far (m) in front of the shoulders, or
 # behind the hips, along the person's front.
 REACH_M = 0.20
+# Ours: the hands this far (statures) ahead of or behind the hips across
+# the image tell a push from a pull (about 8 cm); closer, where the
+# person faces does.
+HANDS_LEAD = 0.05
 # Ours: arms reaching out, elbows bent at most this much (0 is straight);
 # carrying a box held close bends them more.
 ELBOW_MAX = 70.0
@@ -69,6 +73,9 @@ GAP_SECONDS = 0.7
 # least this many times the usual time between two frames, so that one
 # frame missed does not split an episode.
 GAP_FRAMES = 2.5
+# Ours: a push turning into a pull (or back) for this long (s) ends the
+# episode and starts another; shorter, it is taken for noise.
+SWITCH_SECONDS = 0.4
 # Ours: a push or a pull is one steady effort: at least this share of the
 # frames of the episode are of it. Walking with the arms ahead looks
 # like it in bursts of 0.3 s every second (C5), which fewer frames would
@@ -239,6 +246,7 @@ class Pushing:
     _body: BodyHeights = field(default_factory=BodyHeights)
     _first: float | None = None
     _last: float = 0.0
+    _aspect: float = 1.0
     _steps_between: deque[float] = field(
         default_factory=lambda: deque(maxlen=INTERVALS))
 
@@ -278,6 +286,7 @@ class Pushing:
             return self._end_if_gap(second)
         # Horizontal position in image heights, so it compares with the
         # stature measured vertically.
+        self._aspect = aspect
         x = float(hips[0] * aspect)
         self._track.append((second, x, stature))
         # Keep the newest position at least ``SPEED_WINDOW`` old, so the
@@ -304,6 +313,28 @@ class Pushing:
             angles.trunk_twist if angles else 0.0,
             abs(float(left[1] - right[1])) * 100,
             float(np.linalg.norm(left - right)) * 100))
+        return ended or self._split()
+
+    def _split(self) -> Push | None:
+        """A push turned into a pull, or the other way round, without a
+        stop (pushing a chair away and pulling it back, 2026-11-21): the
+        episode so far ends and the new one goes on. Measured as one,
+        the way there and back cancelled out."""
+        steps = self._steps
+        run = len(steps)
+        while run > 0 and steps[run - 1].kind != steps[0].kind:
+            run -= 1
+        if run == len(steps) or run == 0:
+            return None
+        if steps[-1].second - steps[run].second < SWITCH_SECONDS - EPSILON:
+            return None
+        if (steps[run - 1].second - steps[0].second + self._interval
+                < MIN_SECONDS - EPSILON):
+            # A doubtful start, not an episode of its own: kept in it.
+            return None
+        self._steps = steps[:run]
+        ended = self._close()
+        self._steps = steps[run:]
         return ended
 
     def _kind(self, skeleton: Skeleton, reach: str | None) -> Kind | None:
@@ -316,6 +347,14 @@ class Pushing:
         speed = (x1 - x0) / ((s0 + s1) / 2) / (t1 - t0)
         if abs(speed) < SPEED_STATURES:
             return None
+        lead = self._hands_lead(skeleton, speed, (s0 + s1) / 2)
+        if lead is not None:
+            # The hands ahead of the movement push; behind it, they pull
+            # (reaching back, only that: backing into a thing is not
+            # handling it).
+            if reach == "back" and lead:
+                return None
+            return "empuje" if lead else "arrastre"
         # The person's front, seen in the image: x grows to the right in
         # both the 3D points and the image.
         facing = 1.0 if body_axes(skeleton)[2][0] >= 0 else -1.0
@@ -323,6 +362,27 @@ class Pushing:
         if reach == "front":
             return "empuje" if ahead else "arrastre"
         return "arrastre" if ahead else None
+
+    def _hands_lead(self, skeleton: Skeleton, speed: float,
+                    stature: float) -> bool | None:
+        """Whether the hands go ahead of the movement in the image (a
+        push) or behind it (a pull); ``None`` when they are too close to
+        the hips across the image to tell (moving towards or away from
+        the camera). Unlike where the person faces, it is seen the same
+        from any side: facing the camera, the front's sideways part is
+        noise, and pushes were taken for pulls (2026-11-21)."""
+        if skeleton.pixels is None or not stature:
+            return None
+        hands = [skeleton.pixels[p] for p in (Point.LEFT_WRIST,
+                                              Point.RIGHT_WRIST)
+                 if skeleton.seen(p)]
+        if not hands:
+            return None
+        hips = skeleton.pixels[[Point.LEFT_HIP, Point.RIGHT_HIP]].mean(axis=0)
+        ahead = float(np.mean([h[0] for h in hands]) - hips[0]) * self._aspect
+        if abs(ahead) / stature < HANDS_LEAD:
+            return None
+        return ahead * speed > 0
 
     def _end_if_gap(self, second: float) -> Push | None:
         """Close the episode going on when it has stopped long enough."""

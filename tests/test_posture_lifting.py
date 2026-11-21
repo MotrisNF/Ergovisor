@@ -338,6 +338,15 @@ class TestLifting:
         assert [lift.kind for lift in found] == ["descenso", "levantamiento"]
         assert (found[0].start.second or 0) >= 7
 
+    def test_left_low_and_up_at_once_is_one_lowering(self) -> None:
+        """A load left low and the hands up at once, high (to the back of
+        a chair, 2026-11-21): the way up was empty; with a pause low, the
+        load was taken again (see the test above)."""
+        found = play_from(Lifting(load_kg=5), 0.0,
+                          [(2, 0.10, 0.70), (2, 0.70, 0.10),
+                           (2, 0.10, 0.10)])
+        assert [lift.kind for lift in found] == ["descenso"]
+
     def test_impossible_measures_not_scored(self) -> None:
         """Hands beyond what a person reaches, or a stature no person has:
         the model's error, not a lift (a "limit of 0 kg" for hands above

@@ -52,6 +52,7 @@ con ruedas o carro, unos 3 m de espacio libre.
 | D2 | Manipulación, 5–10 min | Pendiente (opcional) |
 | F2 | De pie, sentadilla, agacharse, brazos arriba y acercarse, de frente (cámara baja) | Hecho: `grabacion_2026-11-20_2.mp4`. Ver resultados del 20-11 |
 | F3 | Protocolo completo de frente y de lado, y una estufa de 3–4 kg del suelo a la mesa (3 veces de frente, 3 de lado), a contraluz | Hecho: `grabacion_2026-11-20_3.mp4`. Ver resultados del 20-11 |
+| G1–G4 | La demostración (`make demo`), dos cámaras a la vez (lateral y frontal): una caja del suelo, subida y dejada dos veces; una silla arrastrada, empujada cruzando la imagen y arrastrada de vuelta | Hecho: `grabacion_2026-11-21_5.mp4` a `_8.mp4`. Ver resultados del 21-11 |
 
 ## A. Puesto con pantalla: cámara del portátil (`Cámara 0`)
 
@@ -255,6 +256,34 @@ se trabaja normalmente (F3: máximo 12, media 3,7; de pie, B1: 3 y 1,1).
 Agacharse al suelo da 10–12 por el propio método (tronco a más de 60°,
 rodillas, brazos estirados, cuello en extensión, actividad), como en la
 literatura sobre REBA al levantar del suelo.
+
+## La demostración (21-11-2026)
+
+Dos cámaras a la vez, como en la presentación (G1 lateral y G2 frontal;
+G3 y G4, la misma prueba repetida):
+
+- **Empujes en directo.** Con dos cámaras el ordenador analiza un
+  fotograma cada 0,2–0,3 s, no cada 0,1: a ese ritmo se perdían casi
+  todos (en C1–C4, 2 de 9). La velocidad se mide ahora sobre 0,5 s
+  aunque los fotogramas lleguen más separados, el hueco que corta un
+  episodio se adapta al ritmo y un episodio debe ser continuo (60 % de
+  sus fotogramas): a 0,3 s salen 5 de 9 en C1–C4, sin falsos, y todos
+  los de G1–G4.
+- **Empujar y arrastrar de vuelta sin pararse** (G3, G4) se medía como un
+  solo episodio de ida y vuelta, de 4 cm: un cambio de empuje a
+  arrastre que dura 0,4 s corta el episodio, si lo anterior ya dura lo
+  de uno.
+- **Incorporarse tras dejar la caja** con las manos altas (al respaldo de
+  la silla) contaba como levantamiento. En un punto bajo, si la bajada y
+  la subida parecen las dos con carga, solo se queda la bajada salvo que
+  las manos se queden abajo 0,8 s o más (dejar algo y volver a cogerlo:
+  B5, 1,0 s; incorporarse: 0,1–0,6 s). G1–G4: 2 subidas y 2 bajadas
+  cada uno, lo real.
+- **Hacia la cámara no se ve.** El primer arrastre de G2 va hacia la
+  cámara frontal: el desplazamiento se mide de lado a lado en la imagen.
+  Para la demostración, empujar cruzando la imagen de una cámara.
+- **Grabaciones rotas.** Las sesiones por partes y la demostración
+  dejaban la grabación sin cerrar (MP4 ilegibles); corregido.
 
 ## Repetir la calibración
 
